@@ -16,6 +16,9 @@ choices into an equivalent Cypher query for five query patterns:
 - aggregation with `count()`, `ORDER BY` and `LIMIT`
 
 Each query runs against the graph and returns a result table and a highlighted subgraph.
+The generated Cypher can also be edited by hand. A small built-in interpreter runs the edited query
+(read-only `MATCH` / `WHERE` / `RETURN` / `ORDER BY` / `SKIP` / `LIMIT`, including `count()` and
+variable-length paths), and write clauses such as `CREATE`, `SET` or `DELETE` are blocked.
 Students log their queries as trials, take a 10-question concept quiz, and download a PDF lab
 report. As the course rule for graph experiments requires, the app uses no Neo4j database. The
 graph is stored as plain Python data and loaded into an in-memory `networkx` graph, and the app

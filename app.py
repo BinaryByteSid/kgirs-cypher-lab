@@ -10,12 +10,15 @@ Partitioned into the 4 core sections of the base lab template:
 
 Graph experiment note: as per the course rule, no Neo4j database is used. A small in-memory
 knowledge graph (GRAPH_DATA) is loaded into a networkx MultiDiGraph. The Query Builder produces the
-equivalent Cypher text for display and executes the same logic directly against the networkx graph.
+equivalent Cypher text and executes the same logic directly against the networkx graph. Students can
+also edit the Cypher by hand; a small read-only Cypher interpreter (section 2b) runs the edited query.
 
 Note: No custom CSS is used so that Streamlit native light and dark themes render seamlessly.
 """
 
 import os
+import re
+from dataclasses import dataclass
 from datetime import datetime
 import networkx as nx
 import numpy as np
@@ -87,9 +90,11 @@ Aggregate functions such as `count()` group rows automatically by the other retu
 1. **Graph Construction**: The sample knowledge graph (16 nodes, 25 relationships) is loaded from
    plain Python data into an in-memory `networkx.MultiDiGraph` - no database server is required.
 2. **Query Building**: A guided Query Builder turns your choices (pattern mode, labels,
-   relationship types, filters, hop count) into an equivalent, read-only Cypher query.
+   relationship types, filters, hop count) into an equivalent Cypher query, which you can also
+   edit by hand.
 3. **Execution**: The same pattern is evaluated directly on the networkx graph (label checks,
-   property comparisons, edge-direction checks, and depth-limited path search).
+   property comparisons, edge-direction checks, and depth-limited path search). An edited query
+   is run by a small built-in Cypher interpreter that supports read-only MATCH queries.
 4. **Result Analysis**: Results are shown as a table and as a highlighted subgraph, and each
    query can be logged as a trial for your report.
     """,
@@ -97,7 +102,7 @@ Aggregate functions such as `count()` group rows automatically by the other retu
         "Step 1: Review the theory on nodes, relationships, properties, labels, and the core Cypher clauses.",
         "Step 2: Open the Simulation section and explore the sample movie knowledge graph (graph view, node list, relationship list, and schema).",
         "Step 3: In the Query Builder, choose a query pattern mode (Node Lookup, 1-hop Traversal, Multi-hop Traversal, Filtered Pattern Match, or Aggregation) and set its options.",
-        "Step 4: Read the generated Cypher query and predict what it should return before looking at the results.",
+        "Step 4: Read the generated Cypher query and predict what it should return before looking at the results. Optionally edit the query and run your own version.",
         "Step 5: Examine the result table and the highlighted subgraph, and compare them with your prediction.",
         "Step 6: Click 'Record Current Trial' to log the query mode, Cypher text, and result counts.",
         "Step 7: Repeat with at least one query from each pattern mode (vary labels, directions, hop counts, and filters).",
@@ -716,6 +721,905 @@ def query_aggregation(graph, group_by, label, top_n) -> dict:
 
 
 # ======================================================================================
+# 2b. CYPHER INTERPRETER: RUNS QUERIES THE STUDENT EDITS BY HAND
+# ======================================================================================
+# A small, read-only subset of Cypher evaluated directly on the networkx graph:
+# MATCH (several patterns / clauses, variable-length paths), WHERE, RETURN (DISTINCT, AS,
+# count()), ORDER BY, SKIP and LIMIT. Relationships are not reused within one MATCH, as in Cypher.
+
+MAX_VAR_HOPS = 5
+MAX_MATCH_STEPS = 50000
+WRITE_CLAUSES = {"CREATE", "MERGE", "DELETE", "DETACH", "SET", "REMOVE", "DROP", "LOAD", "FOREACH"}
+UNSUPPORTED_CLAUSES = {"WITH", "UNWIND", "OPTIONAL", "CALL", "UNION", "USE"}
+CLAUSE_WORDS = {"MATCH", "WHERE", "RETURN", "ORDER", "SKIP", "LIMIT"} | WRITE_CLAUSES | UNSUPPORTED_CLAUSES
+CYPHER_FUNCTIONS = {"type", "labels", "length", "size", "properties", "nodes", "relationships",
+                    "tolower", "toupper", "id", "count"}
+COMPARISON_OPS = ("=", "<>", "<", ">", "<=", ">=")
+
+TOKEN_RE = re.compile(r"""
+    (?P<space>\s+|//[^\n]*)
+  | (?P<str>'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")
+  | (?P<num>\d+\.\d+|\d+)
+  | (?P<ident>[A-Za-z_][A-Za-z_0-9]*|`[^`]+`)
+  | (?P<op><>|<=|>=|->|<-|\.\.|[-=<>()\[\]{}:,.*|;])
+""", re.VERBOSE)
+
+
+class CypherError(Exception):
+    """A query the lab's Cypher subset cannot parse or run; the message is shown to the student."""
+
+
+@dataclass(frozen=True)
+class NodeRef:
+    id: str
+
+
+@dataclass(frozen=True)
+class RelRef:
+    u: str
+    v: str
+    k: str
+
+
+@dataclass(frozen=True)
+class PathRef:
+    nodes: tuple  # node ids, in walking order
+    rels: tuple   # RelRef per hop
+
+
+def tokenize(text) -> list:
+    """Splits a query into (kind, value, start, end) tokens."""
+    tokens, pos = [], 0
+    while pos < len(text):
+        m = TOKEN_RE.match(text, pos)
+        if not m:
+            raise CypherError(f"Unexpected character '{text[pos]}' at position {pos + 1}.")
+        kind, value = m.lastgroup, m.group()
+        if kind == "str":
+            value = re.sub(r"\\(.)", r"\1", value[1:-1])
+        elif kind == "ident" and value.startswith("`"):
+            value = value[1:-1]
+        if kind != "space":
+            tokens.append((kind, value, m.start(), m.end()))
+        pos = m.end()
+    return tokens
+
+
+class TokenStream:
+    def __init__(self, tokens):
+        self.tokens, self.i = tokens, 0
+
+    def peek(self, offset=0):
+        j = self.i + offset
+        return self.tokens[j] if j < len(self.tokens) else None
+
+    def at_end(self) -> bool:
+        return self.i >= len(self.tokens)
+
+    def next(self):
+        tok = self.peek()
+        if tok is None:
+            raise CypherError("The query ends too early; something is missing at the end.")
+        self.i += 1
+        return tok
+
+    def at(self, value, offset=0) -> bool:
+        tok = self.peek(offset)
+        return tok is not None and tok[0] == "op" and tok[1] == value
+
+    def at_word(self, word, offset=0) -> bool:
+        tok = self.peek(offset)
+        return tok is not None and tok[0] == "ident" and tok[1].upper() == word
+
+    def at_ident(self) -> bool:
+        tok = self.peek()
+        return tok is not None and tok[0] == "ident"
+
+    def expect(self, value):
+        tok = self.next()
+        if tok[0] != "op" or tok[1] != value:
+            raise CypherError(f"Expected '{value}' but found '{tok[1]}'.")
+        return tok
+
+    def expect_ident(self, what) -> str:
+        tok = self.next()
+        if tok[0] != "ident":
+            raise CypherError(f"Expected {what} but found '{tok[1]}'.")
+        return tok[1]
+
+
+def token_text(text, toks) -> str:
+    return " ".join(text[toks[0][2]:toks[-1][3]].split())
+
+
+def split_top(toks, sep=",") -> list:
+    """Splits tokens on a separator that is not inside brackets."""
+    parts, cur, depth = [], [], 0
+    for tok in toks:
+        if tok[0] == "op" and tok[1] in ("(", "[", "{"):
+            depth += 1
+        elif tok[0] == "op" and tok[1] in (")", "]", "}"):
+            depth -= 1
+        if depth == 0 and tok[0] == "op" and tok[1] == sep:
+            parts.append(cur)
+            cur = []
+            continue
+        cur.append(tok)
+    parts.append(cur)
+    if any(not p for p in parts):
+        raise CypherError("There is an extra or missing comma.")
+    return parts
+
+
+def split_clauses(tokens) -> list:
+    """Groups tokens under their clause keyword: [(MATCH, [...]), (WHERE, [...]), ...]."""
+    clauses, depth, i = [], 0, 0
+    while i < len(tokens):
+        tok = tokens[i]
+        prev = tokens[i - 1] if i else None
+        if tok[0] == "op" and tok[1] in ("(", "[", "{"):
+            depth += 1
+        elif tok[0] == "op" and tok[1] in (")", "]", "}"):
+            depth -= 1
+        word = tok[1].upper() if tok[0] == "ident" else None
+        is_clause = (depth == 0 and word in CLAUSE_WORDS
+                     and not (prev and prev[0] == "op" and prev[1] == ".")
+                     and not (word == "WITH" and prev and prev[0] == "ident"
+                              and prev[1].upper() in ("STARTS", "ENDS")))
+        if is_clause:
+            if word == "ORDER":
+                if not (i + 1 < len(tokens) and tokens[i + 1][0] == "ident" and tokens[i + 1][1].upper() == "BY"):
+                    raise CypherError("Write ORDER BY, not just ORDER.")
+                i += 1
+            clauses.append((word, []))
+        elif not clauses:
+            raise CypherError("A query must start with MATCH.")
+        else:
+            clauses[-1][1].append(tok)
+        i += 1
+    return clauses
+
+
+def parse_literal(ts):
+    negative = ts.at("-")
+    if negative:
+        ts.next()
+    tok = ts.next()
+    if tok[0] == "num":
+        value = float(tok[1]) if "." in tok[1] else int(tok[1])
+        return -value if negative else value
+    if not negative and tok[0] == "str":
+        return tok[1]
+    if not negative and tok[0] == "ident" and tok[1].lower() in ("true", "false", "null"):
+        return {"true": True, "false": False, "null": None}[tok[1].lower()]
+    raise CypherError(f"'{tok[1]}' is not a value. Put text in quotes, like \"The Matrix\".")
+
+
+def parse_map(ts) -> dict:
+    ts.expect("{")
+    props = {}
+    while not ts.at("}"):
+        key = ts.expect_ident("a property name")
+        ts.expect(":")
+        props[key] = parse_literal(ts)
+        if ts.at(","):
+            ts.next()
+        elif not ts.at("}"):
+            raise CypherError("Separate properties with commas, like {name: \"X\", born: 1964}.")
+    ts.expect("}")
+    return props
+
+
+def parse_node(ts) -> dict:
+    ts.expect("(")
+    var = ts.next()[1] if ts.at_ident() else None
+    labels = []
+    while ts.at(":"):
+        ts.next()
+        labels.append(ts.expect_ident("a label"))
+    props = parse_map(ts) if ts.at("{") else {}
+    ts.expect(")")
+    return {"var": var, "labels": labels, "props": props}
+
+
+def parse_hops(ts) -> tuple:
+    """The part after '*': '' -> 1..max, '2' -> 2..2, '1..3', '..3', '2..'. Returns (low, high, capped)."""
+    low = high = None
+    if ts.peek() and ts.peek()[0] == "num":
+        low = int(float(ts.next()[1]))
+    if ts.at(".."):
+        ts.next()
+        if ts.peek() and ts.peek()[0] == "num":
+            high = int(float(ts.next()[1]))
+    elif low is not None:
+        high = low
+    low = 1 if low is None else low
+    capped = high is None or high > MAX_VAR_HOPS
+    high = MAX_VAR_HOPS if capped else high
+    if low > high:
+        raise CypherError(f"The hop range is empty (this lab allows paths of up to {MAX_VAR_HOPS} hops).")
+    return low, high, capped
+
+
+def parse_rel(ts) -> dict:
+    if not (ts.at("<-") or ts.at("-")):
+        found = ts.peek()[1] if ts.peek() else "the end"
+        raise CypherError(f"Expected a relationship like -[:TYPE]-> but found '{found}'.")
+    left = ts.next()[1] == "<-"
+    var, types, hops, props = None, [], None, {}
+    if ts.at("["):
+        ts.next()
+        if ts.at_ident():
+            var = ts.next()[1]
+        if ts.at(":"):
+            ts.next()
+            types.append(ts.expect_ident("a relationship type"))
+            while ts.at("|"):
+                ts.next()
+                if ts.at(":"):
+                    ts.next()
+                types.append(ts.expect_ident("a relationship type"))
+        if ts.at("*"):
+            ts.next()
+            hops = parse_hops(ts)
+        if ts.at("{"):
+            props = parse_map(ts)
+        ts.expect("]")
+    if not (ts.at("->") or ts.at("-")):
+        raise CypherError("A relationship must end with - or ->.")
+    right = ts.next()[1] == "->"
+    if left and right:
+        raise CypherError("A relationship cannot point both ways (<- ... ->).")
+    direction = "in" if left else "out" if right else "both"
+    return {"var": var, "types": types, "hops": hops, "props": props, "direction": direction}
+
+
+def parse_pattern(toks) -> dict:
+    ts = TokenStream(toks)
+    path_var = None
+    if ts.at_ident() and ts.at("=", 1):
+        path_var = ts.next()[1]
+        ts.next()
+    nodes, rels = [parse_node(ts)], []
+    while not ts.at_end():
+        rels.append(parse_rel(ts))
+        nodes.append(parse_node(ts))
+    return {"path": path_var, "nodes": nodes, "rels": rels}
+
+
+def parse_atom(ts):
+    kind, value = ts.next()[:2]
+    if kind == "op" and value == "-":
+        return ("neg", parse_atom(ts))
+    if kind == "op" and value == "(":
+        expr = parse_or(ts)
+        ts.expect(")")
+        return parse_postfix(ts, expr)
+    if kind == "op" and value == "[":
+        items = []
+        while not ts.at("]"):
+            items.append(parse_or(ts))
+            if ts.at(","):
+                ts.next()
+            elif not ts.at("]"):
+                raise CypherError("Separate list items with commas, like [1999, 2010].")
+        ts.expect("]")
+        return ("list", items)
+    if kind == "num":
+        return ("lit", float(value) if "." in value else int(value))
+    if kind == "str":
+        return ("lit", value)
+    if kind == "ident":
+        low = value.lower()
+        if low in ("true", "false", "null"):
+            return ("lit", {"true": True, "false": False, "null": None}[low])
+        if ts.at("("):
+            if low not in CYPHER_FUNCTIONS:
+                raise CypherError(f"The function {value}() is not supported here. "
+                                  "Try type(), labels(), length(), properties() or count().")
+            ts.next()
+            if low == "count" and ts.at("*"):
+                ts.next()
+                ts.expect(")")
+                return ("count", None, False)
+            distinct = ts.at_word("DISTINCT")
+            if distinct:
+                ts.next()
+            arg = parse_or(ts)
+            ts.expect(")")
+            if low == "count":
+                return ("count", arg, distinct)
+            return parse_postfix(ts, ("func", low, arg))
+        return parse_postfix(ts, ("var", value))
+    raise CypherError(f"Did not understand '{value}' here.")
+
+
+def parse_postfix(ts, expr):
+    while True:
+        if ts.at("."):
+            ts.next()
+            expr = ("prop", expr, ts.expect_ident("a property name"))
+        elif ts.at("["):
+            ts.next()
+            index = parse_or(ts)
+            ts.expect("]")
+            expr = ("index", expr, index)
+        else:
+            return expr
+
+
+def parse_comparison(ts):
+    left = parse_atom(ts)
+    tok = ts.peek()
+    if tok is not None and tok[0] == "op" and tok[1] in COMPARISON_OPS:
+        ts.next()
+        return ("cmp", tok[1], left, parse_atom(ts))
+    for word in ("CONTAINS", "IN"):
+        if ts.at_word(word):
+            ts.next()
+            return ("cmp", word, left, parse_atom(ts))
+    if ts.at_word("STARTS") or ts.at_word("ENDS"):
+        word = ts.next()[1].upper()
+        if not ts.at_word("WITH"):
+            raise CypherError(f"Write {word} WITH.")
+        ts.next()
+        return ("cmp", f"{word} WITH", left, parse_atom(ts))
+    if ts.at_word("IS"):
+        ts.next()
+        negate = ts.at_word("NOT")
+        if negate:
+            ts.next()
+        if not ts.at_word("NULL"):
+            raise CypherError("Write IS NULL or IS NOT NULL.")
+        ts.next()
+        return ("isnull", left, negate)
+    return left
+
+
+def parse_not(ts):
+    if ts.at_word("NOT"):
+        ts.next()
+        return ("not", parse_not(ts))
+    return parse_comparison(ts)
+
+
+def parse_and(ts):
+    left = parse_not(ts)
+    while ts.at_word("AND"):
+        ts.next()
+        left = ("and", left, parse_not(ts))
+    return left
+
+
+def parse_or(ts):
+    left = parse_and(ts)
+    while ts.at_word("OR") or ts.at_word("XOR"):
+        op = ts.next()[1].lower()
+        left = (op, left, parse_and(ts))
+    return left
+
+
+def parse_expression(toks):
+    if not toks:
+        raise CypherError("Something is missing after WHERE, RETURN or ORDER BY.")
+    ts = TokenStream(toks)
+    expr = parse_or(ts)
+    if not ts.at_end():
+        raise CypherError(f"Did not understand '{ts.peek()[1]}' here.")
+    return expr
+
+
+def expr_children(expr) -> list:
+    return [part for part in expr[1:] if isinstance(part, tuple)] + \
+        [item for part in expr[1:] if isinstance(part, list) for item in part]
+
+
+def contains_count(expr) -> bool:
+    return expr[0] == "count" or any(contains_count(child) for child in expr_children(expr))
+
+
+def expr_vars(expr) -> set:
+    found = {expr[1]} if expr[0] == "var" else set()
+    for child in expr_children(expr):
+        found |= expr_vars(child)
+    return found
+
+
+def parse_count_clause(toks, word) -> int:
+    if len(toks) != 1 or toks[0][0] != "num" or "." in toks[0][1]:
+        raise CypherError(f"{word} needs a whole number, like {word} 5.")
+    return int(toks[0][1])
+
+
+def parse_return(toks, text) -> dict:
+    distinct = bool(toks) and toks[0][0] == "ident" and toks[0][1].upper() == "DISTINCT"
+    if distinct:
+        toks = toks[1:]
+    if not toks:
+        raise CypherError("RETURN needs something to show, like RETURN n.name.")
+    if len(toks) == 1 and toks[0][0] == "op" and toks[0][1] == "*":
+        return {"distinct": distinct, "items": None}
+    items = []
+    for part in split_top(toks):
+        alias = None
+        if len(part) >= 3 and part[-2][0] == "ident" and part[-2][1].upper() == "AS" and part[-1][0] == "ident":
+            alias, part = part[-1][1], part[:-2]
+        expr = parse_expression(part)
+        if contains_count(expr) and expr[0] != "count":
+            raise CypherError("Use count() on its own in a RETURN item, like count(r) AS total.")
+        expr_text = token_text(text, part)
+        items.append({"name": alias or expr_text, "text": expr_text, "expr": expr, "agg": expr[0] == "count"})
+    return {"distinct": distinct, "items": items}
+
+
+def parse_order(toks, text) -> list:
+    specs = []
+    for part in split_top(toks):
+        desc = False
+        if part[-1][0] == "ident" and part[-1][1].upper() in ("ASC", "ASCENDING", "DESC", "DESCENDING"):
+            desc = part[-1][1].upper().startswith("DESC")
+            part = part[:-1]
+        if not part:
+            raise CypherError("ORDER BY needs something to sort by.")
+        specs.append({"text": token_text(text, part), "expr": parse_expression(part), "desc": desc})
+    return specs
+
+
+def parse_query(text) -> dict:
+    tokens = tokenize(text)
+    while tokens and tokens[-1][0] == "op" and tokens[-1][1] == ";":
+        tokens.pop()
+    if not tokens:
+        raise CypherError("The query is empty.")
+    if any(tok[0] == "op" and tok[1] == ";" for tok in tokens):
+        raise CypherError("Run one query at a time (remove the ';' in the middle).")
+    clauses = split_clauses(tokens)
+    if clauses[0][0] not in {"MATCH"} | WRITE_CLAUSES | UNSUPPORTED_CLAUSES:
+        raise CypherError("A query must start with MATCH.")
+    query = {"matches": [], "where": [], "return": None, "order": [], "skip": 0, "limit": None}
+    stage = "match"
+    for word, toks in clauses:
+        if word in WRITE_CLAUSES:
+            raise CypherError(f"{word} changes the graph. This lab is read-only, so only MATCH queries can run.")
+        if word in UNSUPPORTED_CLAUSES:
+            raise CypherError(f"{word} is not supported in this lab. Use MATCH, WHERE, RETURN, ORDER BY and LIMIT.")
+        if word == "MATCH":
+            if stage != "match":
+                raise CypherError("MATCH must come before RETURN.")
+            if not toks:
+                raise CypherError("MATCH needs a pattern, like (n:Person).")
+            query["matches"].append([parse_pattern(part) for part in split_top(toks)])
+        elif word == "WHERE":
+            if stage != "match" or not query["matches"]:
+                raise CypherError("WHERE must come right after a MATCH.")
+            expr = parse_expression(toks)
+            if contains_count(expr):
+                raise CypherError("count() can only be used in RETURN, not in WHERE.")
+            query["where"].append(expr)
+        elif word == "RETURN":
+            if stage != "match" or not query["matches"]:
+                raise CypherError("RETURN must come after MATCH.")
+            query["return"] = parse_return(toks, text)
+            stage = "return"
+        elif word == "ORDER":
+            if stage != "return":
+                raise CypherError("ORDER BY must come after RETURN.")
+            query["order"] = parse_order(toks, text)
+            stage = "order"
+        elif word == "SKIP":
+            if stage not in ("return", "order"):
+                raise CypherError("SKIP must come after RETURN (and ORDER BY).")
+            query["skip"] = parse_count_clause(toks, "SKIP")
+            stage = "skip"
+        elif word == "LIMIT":
+            if stage not in ("return", "order", "skip"):
+                raise CypherError("LIMIT must come last, after RETURN.")
+            query["limit"] = parse_count_clause(toks, "LIMIT")
+            stage = "limit"
+    if query["return"] is None:
+        raise CypherError("Add a RETURN clause to say what to show, like RETURN n.name.")
+    return query
+
+
+def pattern_vars(query) -> list:
+    """User-named variables in the order they appear in the MATCH patterns."""
+    names = []
+    for patterns in query["matches"]:
+        for pat in patterns:
+            candidates = [pat["path"]] + [n["var"] for n in pat["nodes"]] + [r["var"] for r in pat["rels"]]
+            names += [v for v in candidates if v and v not in names]
+    return names
+
+
+def check_variables(query, declared):
+    known = set(declared)
+    items = query["return"]["items"] or []
+    exprs = list(query["where"]) + [it["expr"] for it in items]
+    columns = {it["name"] for it in items} | {it["text"] for it in items}
+    exprs += [spec["expr"] for spec in query["order"] if spec["text"] not in columns]
+    for expr in exprs:
+        unknown = sorted(expr_vars(expr) - known)
+        if unknown:
+            raise CypherError(f"Unknown variable '{unknown[0]}'. Variables come from the MATCH pattern, "
+                              "like p in (p:Person).")
+
+
+def cypher_compare(op, a, b):
+    """Cypher comparison with null: any comparison involving null is null (neither true nor false)."""
+    if op == "IN":
+        if b is None or a is None:
+            return None
+        if not isinstance(b, (list, tuple)):
+            raise CypherError("IN needs a list on the right, like n.released IN [1999, 2010].")
+        return a in b
+    if a is None or b is None:
+        return None
+    if op in ("=", "<>"):
+        return (a == b) == (op == "=")
+    if op in ("CONTAINS", "STARTS WITH", "ENDS WITH"):
+        if not (isinstance(a, str) and isinstance(b, str)):
+            return None
+        return {"CONTAINS": b in a, "STARTS WITH": a.startswith(b), "ENDS WITH": a.endswith(b)}[op]
+
+    def is_num(x):
+        return isinstance(x, (int, float)) and not isinstance(x, bool)
+    if (is_num(a) and is_num(b)) or (isinstance(a, str) and isinstance(b, str)):
+        return {">": a > b, ">=": a >= b, "<": a < b, "<=": a <= b}[op]
+    return None
+
+
+def cypher_logic(op, a, b):
+    for v in (a, b):
+        if v is not None and not isinstance(v, bool):
+            raise CypherError(f"{op.upper()} needs true/false conditions on both sides.")
+    if op == "and":
+        if a is False or b is False:
+            return False
+        return None if a is None or b is None else True
+    if op == "or":
+        if a is True or b is True:
+            return True
+        return None if a is None or b is None else False
+    return None if a is None or b is None else a != b
+
+
+def call_function(graph, name, value):
+    if value is None:
+        return None
+    if name == "type" and isinstance(value, RelRef):
+        return graph.edges[value.u, value.v, value.k]["type"]
+    if name == "labels" and isinstance(value, NodeRef):
+        return [graph.nodes[value.id]["label"]]
+    if name == "id" and isinstance(value, NodeRef):
+        return value.id
+    if name == "id" and isinstance(value, RelRef):
+        return value.k
+    if name == "properties" and isinstance(value, NodeRef):
+        return dict(graph.nodes[value.id]["props"])
+    if name == "properties" and isinstance(value, RelRef):
+        return dict(graph.edges[value.u, value.v, value.k]["props"])
+    if name == "length" and isinstance(value, PathRef):
+        return len(value.rels)
+    if name in ("length", "size") and isinstance(value, (list, tuple, str)):
+        return len(value)
+    if name == "nodes" and isinstance(value, PathRef):
+        return [NodeRef(n) for n in value.nodes]
+    if name == "relationships" and isinstance(value, PathRef):
+        return list(value.rels)
+    if name in ("tolower", "toupper") and isinstance(value, str):
+        return value.lower() if name == "tolower" else value.upper()
+    raise CypherError(f"{name}() cannot be used on this kind of value.")
+
+
+def eval_expr(graph, expr, row):
+    kind = expr[0]
+    if kind == "lit":
+        return expr[1]
+    if kind == "var":
+        if expr[1] not in row:
+            raise CypherError(f"Unknown variable '{expr[1]}'.")
+        return row[expr[1]]
+    if kind == "prop":
+        base = eval_expr(graph, expr[1], row)
+        if base is None:
+            return None
+        if isinstance(base, NodeRef):
+            return graph.nodes[base.id]["props"].get(expr[2])
+        if isinstance(base, RelRef):
+            return graph.edges[base.u, base.v, base.k]["props"].get(expr[2])
+        if isinstance(base, dict):
+            return base.get(expr[2])
+        raise CypherError(f"Only nodes and relationships have properties (.{expr[2]}).")
+    if kind == "index":
+        base, index = eval_expr(graph, expr[1], row), eval_expr(graph, expr[2], row)
+        if base is None or index is None:
+            return None
+        if not isinstance(base, (list, tuple)):
+            raise CypherError("Only lists can be indexed with [ ].")
+        if not isinstance(index, int) or isinstance(index, bool):
+            raise CypherError("A list index must be a whole number, like labels(n)[0].")
+        return base[index] if -len(base) <= index < len(base) else None
+    if kind == "list":
+        return [eval_expr(graph, item, row) for item in expr[1]]
+    if kind == "neg":
+        value = eval_expr(graph, expr[1], row)
+        if value is not None and (not isinstance(value, (int, float)) or isinstance(value, bool)):
+            raise CypherError("A minus sign only works on numbers.")
+        return None if value is None else -value
+    if kind == "func":
+        return call_function(graph, expr[1], eval_expr(graph, expr[2], row))
+    if kind == "count":
+        raise CypherError("count() can only be used in RETURN.")
+    if kind == "not":
+        value = eval_expr(graph, expr[1], row)
+        if value is not None and not isinstance(value, bool):
+            raise CypherError("NOT needs a true/false condition.")
+        return None if value is None else not value
+    if kind in ("and", "or", "xor"):
+        return cypher_logic(kind, eval_expr(graph, expr[1], row), eval_expr(graph, expr[2], row))
+    if kind == "isnull":
+        is_null = eval_expr(graph, expr[1], row) is None
+        return not is_null if expr[2] else is_null
+    return cypher_compare(expr[1], eval_expr(graph, expr[2], row), eval_expr(graph, expr[3], row))
+
+
+def node_matches(graph, node_id, pat) -> bool:
+    data = graph.nodes[node_id]
+    if any(label != data["label"] for label in pat["labels"]):
+        return False
+    return all(data["props"].get(k) == v for k, v in pat["props"].items())
+
+
+def rel_matches(data, pat) -> bool:
+    if pat["types"] and data["type"] not in pat["types"]:
+        return False
+    return all(data["props"].get(k) == v for k, v in pat["props"].items())
+
+
+def bind(row, var, value):
+    """Adds var=value to a row; returns None when var is already bound to something else."""
+    if row is None or not var:
+        return row
+    if var in row:
+        return row if row[var] == value else None
+    return {**row, var: value}
+
+
+def rel_steps(graph, node_id, direction):
+    if direction in ("out", "both"):
+        for u, v, k, d in graph.out_edges(node_id, keys=True, data=True):
+            yield v, RelRef(u, v, k), d
+    if direction in ("in", "both"):
+        for u, v, k, d in graph.in_edges(node_id, keys=True, data=True):
+            yield u, RelRef(u, v, k), d
+
+
+def match_clause(graph, patterns, start_row, budget) -> list:
+    """All ways one MATCH clause (its comma-separated patterns) fits the graph, extending start_row."""
+    results = []
+
+    def spend():
+        budget[0] -= 1
+        if budget[0] < 0:
+            raise CypherError("This query explores too many paths for the lab. "
+                              "Add labels, a relationship type or fewer hops.")
+
+    def bind_node(row, pat, node_id):
+        return bind(row, pat["var"], NodeRef(node_id)) if node_matches(graph, node_id, pat) else None
+
+    def match_from(pi, row, used):
+        if pi == len(patterns):
+            results.append(row)
+            return
+        first = patterns[pi]["nodes"][0]
+        bound = row.get(first["var"]) if first["var"] else None
+        starts = [bound.id] if isinstance(bound, NodeRef) else sorted_node_ids(graph)
+        for start in starts:
+            new_row = bind_node(row, first, start)
+            if new_row is not None:
+                walk(pi, 0, start, new_row, used, [start], [])
+
+    def walk(pi, ri, cur, row, used, path_nodes, path_rels):
+        spend()
+        pat = patterns[pi]
+        if ri == len(pat["rels"]):
+            row = {**row, "#nodes": row.get("#nodes", ()) + tuple(path_nodes),
+                   "#rels": row.get("#rels", ()) + tuple(path_rels)}
+            row.setdefault("#start", path_nodes[0])
+            if pat["path"]:
+                row = bind(row, pat["path"], PathRef(tuple(path_nodes), tuple(path_rels)))
+            if row is not None:
+                match_from(pi + 1, row, used)
+            return
+        rel, nxt = pat["rels"][ri], pat["nodes"][ri + 1]
+        if rel["hops"] is None:
+            for other, ref, data in rel_steps(graph, cur, rel["direction"]):
+                if ref in used or not rel_matches(data, rel):
+                    continue
+                new_row = bind_node(bind(row, rel["var"], ref), nxt, other)
+                if new_row is not None:
+                    walk(pi, ri + 1, other, new_row, used | {ref}, path_nodes + [other], path_rels + [ref])
+            return
+        low, high, _ = rel["hops"]
+
+        def extend(node, hops, hop_nodes, used_now):
+            spend()
+            if len(hops) >= low:
+                new_row = bind_node(bind(row, rel["var"], tuple(hops)), nxt, node)
+                if new_row is not None:
+                    walk(pi, ri + 1, node, new_row, used_now, path_nodes + hop_nodes, path_rels + hops)
+            if len(hops) == high:
+                return
+            for other, ref, data in rel_steps(graph, node, rel["direction"]):
+                if ref not in used_now and rel_matches(data, rel):
+                    extend(other, hops + [ref], hop_nodes + [other], used_now | {ref})
+
+        extend(cur, [], [], used)
+
+    match_from(0, start_row, frozenset())
+    return results
+
+
+def hashable(value):
+    if isinstance(value, (list, tuple)):
+        return tuple(hashable(v) for v in value)
+    if isinstance(value, dict):
+        return tuple(sorted((k, hashable(v)) for k, v in value.items()))
+    return value
+
+
+def display_value(graph, value):
+    """Shows a Cypher value the way Neo4j prints it: (:Label {...}), [:TYPE {...}], paths, lists."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float, str)):
+        return value
+    if isinstance(value, NodeRef):
+        data = graph.nodes[value.id]
+        return f"(:{data['label']} {format_props(data['props'])})"
+    if isinstance(value, RelRef):
+        data = graph.edges[value.u, value.v, value.k]
+        props = format_props(data["props"])
+        return f"[:{data['type']}{' ' + props if props else ''}]"
+    if isinstance(value, PathRef):
+        parts = [node_name(graph, value.nodes[0])]
+        for rel, prev, nxt in zip(value.rels, value.nodes, value.nodes[1:]):
+            rel_type = graph.edges[rel.u, rel.v, rel.k]["type"]
+            parts.append(f" -[:{rel_type}]-> " if rel.u == prev else f" <-[:{rel_type}]- ")
+            parts.append(node_name(graph, nxt))
+        return "".join(parts)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(str(display_value(graph, v)) for v in value) + "]"
+    if isinstance(value, dict):
+        return format_props(value) or "{}"
+    return str(value)
+
+
+def sort_key(graph, value):
+    """Cypher ordering: nulls last when ascending (so first when descending)."""
+    if value is None:
+        return (1,)
+    if isinstance(value, bool):
+        return (0, 0, value)
+    if isinstance(value, (int, float)):
+        return (0, 1, value)
+    if isinstance(value, str):
+        return (0, 2, value)
+    return (0, 3, str(display_value(graph, value)))
+
+
+def project_rows(graph, items, rows, distinct) -> list:
+    """RETURN: one (values, source rows) pair per output row; count() groups by the other items."""
+    if any(it["agg"] for it in items):
+        groups = {}
+        for row in rows:
+            values = [None if it["agg"] else eval_expr(graph, it["expr"], row) for it in items]
+            key = hashable([v for it, v in zip(items, values) if not it["agg"]])
+            groups.setdefault(key, (values, []))[1].append(row)
+        if not groups and all(it["agg"] for it in items):
+            groups[()] = ([None] * len(items), [])
+        out = []
+        for values, members in groups.values():
+            final = []
+            for it, value in zip(items, values):
+                if not it["agg"]:
+                    final.append(value)
+                    continue
+                _, arg, count_distinct = it["expr"]
+                if arg is None:
+                    final.append(len(members))
+                    continue
+                counted = [v for v in (eval_expr(graph, arg, m) for m in members) if v is not None]
+                final.append(len({hashable(v) for v in counted}) if count_distinct else len(counted))
+            out.append((final, members))
+    else:
+        out = [([eval_expr(graph, it["expr"], row) for it in items], [row]) for row in rows]
+    if distinct:
+        merged = {}
+        for values, members in out:
+            merged.setdefault(hashable(values), (values, []))[1].extend(members)
+        out = list(merged.values())
+    return out
+
+
+def order_rows(graph, specs, items, out) -> list:
+    columns = {}
+    for i, it in enumerate(items):
+        columns.setdefault(it["name"], i)
+        columns.setdefault(it["text"], i)
+    aggregated = any(it["agg"] for it in items)
+    for spec in reversed(specs):  # stable sorts, last key first
+        index = columns.get(spec["text"])
+        if index is not None:
+            out = sorted(out, key=lambda r, i=index: sort_key(graph, r[0][i]), reverse=spec["desc"])
+        elif aggregated:
+            raise CypherError(f"ORDER BY {spec['text']}: when counting, sort by a column you RETURN.")
+        else:
+            out = sorted(out, key=lambda r, e=spec["expr"]: sort_key(graph, eval_expr(graph, e, r[1][0])),
+                         reverse=spec["desc"])
+    return out
+
+
+def query_custom(graph, text) -> dict:
+    """Parses and runs a hand-edited Cypher query; raises CypherError with a student-friendly message."""
+    query = parse_query(text)
+    declared = pattern_vars(query)
+    check_variables(query, declared)
+
+    budget = [MAX_MATCH_STEPS]
+    rows = [{}]
+    for patterns in query["matches"]:
+        rows = [new for row in rows for new in match_clause(graph, patterns, row, budget)]
+    rows = [row for row in rows if all(eval_expr(graph, w, row) is True for w in query["where"])]
+
+    items = query["return"]["items"]
+    if items is None:  # RETURN *
+        if not declared:
+            raise CypherError("RETURN * needs named variables in the pattern, like (p:Person).")
+        items = [{"name": v, "text": v, "expr": ("var", v), "agg": False} for v in declared]
+    out = project_rows(graph, items, rows, query["return"]["distinct"])
+    out = order_rows(graph, query["order"], items, out)[query["skip"]:]
+    if query["limit"] is not None:
+        out = out[:query["limit"]]
+
+    columns = []
+    for it in items:
+        name, n = it["name"], 2
+        while name in columns:
+            name, n = f"{it['name']} ({n})", n + 1
+        columns.append(name)
+    table_rows = [[display_value(graph, v) for v in values] for values, _ in out]
+    for c in range(len(columns)):  # a column mixing numbers and text is shown as text
+        if len({type(row[c]) for row in table_rows}) > 1:
+            for row in table_rows:
+                row[c] = str(row[c])
+
+    nodes, edges, starts = set(), set(), set()
+    for _, members in out:
+        for row in members:
+            nodes.update(row.get("#nodes", ()))
+            edges.update((r.u, r.v, r.k) for r in row.get("#rels", ()))
+            if "#start" in row:
+                starts.add(row["#start"])
+
+    chart = None
+    if len(items) == 2 and [it["agg"] for it in items] == [False, True] and table_rows:
+        chart = pd.DataFrame({"group": [str(r[0]) for r in table_rows], "count": [r[1] for r in table_rows]})
+
+    summary = (f"Your query returned {len(table_rows)} row(s), touching {len(nodes)} node(s) "
+               f"and {len(edges)} relationship(s).")
+    if any(rel["hops"] and rel["hops"][2] for patterns in query["matches"]
+           for pat in patterns for rel in pat["rels"]):
+        summary += f" Open-ended hop ranges are capped at {MAX_VAR_HOPS} hops in this lab."
+    one_line = " ".join(text.split())
+    scope = one_line if len(one_line) <= 60 else one_line[:57] + "..."
+    return make_result("Custom Cypher", scope, text.strip(), table_rows, columns, nodes, edges, summary,
+                       focus=starts if len(starts) == 1 else None, chart=chart)
+
+
+# ======================================================================================
 # 3. GRAPH VISUALIZATION (PLOTLY)
 # ======================================================================================
 
@@ -1198,11 +2102,46 @@ def render_query_builder(graph) -> dict:
     return query_aggregation(graph, group_by, label if node_grouping else ANY, top_n)
 
 
+def reset_cypher_editor():
+    st.session_state["cypher_editor"] = st.session_state.get("cypher_generated", "")
+
+
+def render_cypher_editor(graph, builder_result):
+    """Editable Cypher box: starts as the builder's query; an edited query runs through the Cypher subset.
+    Returns the result to display, or None when the edited query cannot be run."""
+    generated = builder_result["cypher"]
+    # A new builder query (or returning to this section) refills the editor
+    if st.session_state.get("cypher_generated") != generated or "cypher_editor" not in st.session_state:
+        st.session_state["cypher_generated"] = generated
+        st.session_state["cypher_editor"] = generated
+
+    st.markdown("**Cypher Query** (read / write: edit it, then press Ctrl+Enter to run)")
+    text = st.text_area("Cypher query", key="cypher_editor", label_visibility="collapsed",
+                        height=max(110, 26 * (generated.count("\n") + 2)))
+    edited = " ".join(text.split()) != " ".join(generated.split())
+
+    col_reset, col_help = st.columns([1, 3])
+    with col_reset:
+        st.button("Reset to Query Builder", on_click=reset_cypher_editor, disabled=not edited, width="stretch")
+    with col_help:
+        st.caption("Supported: MATCH (patterns, -[*1..3]- paths), WHERE (AND / OR / NOT, =, <>, <, >, CONTAINS, "
+                   "STARTS WITH, IN, IS NULL), RETURN (DISTINCT, AS, count, type, labels, length, properties), "
+                   "ORDER BY, SKIP, LIMIT. The graph is read-only: CREATE, SET and DELETE are blocked.")
+
+    if not edited:
+        return builder_result
+    try:
+        return query_custom(graph, text)
+    except CypherError as err:
+        st.error(f"Could not run this query: {err}")
+        return None
+
+
 def render_simulation_section():
     """Renders Section 2: Graph Explorer, Query Builder, Results, and Trial Logger."""
     st.header("Interactive Simulation: Querying a Knowledge Graph")
-    st.info("Explore the sample graph, build a Cypher query with the guided Query Builder, and log each "
-            "query as a trial. The graph lives in memory (networkx); no Neo4j database is used.")
+    st.info("Explore the sample graph, build a Cypher query with the guided Query Builder (or edit it by hand), "
+            "and log each query as a trial. The graph lives in memory (networkx); no Neo4j database is used.")
 
     graph = build_knowledge_graph()
     pos = compute_layout(SIMULATION_CONFIG["layout_seed"],
@@ -1212,39 +2151,41 @@ def render_simulation_section():
     st.divider()
     result = render_query_builder(graph)
 
-    st.markdown("**Generated Cypher Query** (read-only)")
-    st.code(result["cypher"], language="cypher")
+    result = render_cypher_editor(graph, result)
 
-    m1, m2, m3, m4 = st.columns(4)
-    with m1:
-        st.metric("Rows Returned", len(result["table"]))
-    with m2:
-        st.metric("Matched Nodes", len(result["nodes"]))
-    with m3:
-        st.metric("Matched Relationships", len(result["edges"]))
-    with m4:
-        st.metric("Query Mode", result["mode"])
-    st.write(f"**Result summary:** {result['summary']}")
+    if result is None:
+        st.info("Fix the query above, or click 'Reset to Query Builder' to get the generated query back.")
+    else:
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            st.metric("Rows Returned", len(result["table"]))
+        with m2:
+            st.metric("Matched Nodes", len(result["nodes"]))
+        with m3:
+            st.metric("Matched Relationships", len(result["edges"]))
+        with m4:
+            st.metric("Query Mode", result["mode"])
+        st.write(f"**Result summary:** {result['summary']}")
 
-    col_table, col_graph = st.columns([2, 3])
-    with col_table:
-        st.markdown("**Result Table**")
-        if result["table"].empty:
-            st.warning("The query returned 0 rows. Try a different label, relationship type, or direction.")
-        else:
-            st.dataframe(result["table"], width="stretch", hide_index=True)
-    with col_graph:
-        st.markdown("**Highlighted Subgraph** (matched items in red; start node enlarged)")
-        st.plotly_chart(
-            build_graph_figure(graph, pos, highlight_nodes=result["nodes"],
-                               highlight_edges=result["edges"], focus_nodes=result["focus"]),
-            key="result_graph_chart"
-        )
+        col_table, col_graph = st.columns([2, 3])
+        with col_table:
+            st.markdown("**Result Table**")
+            if result["table"].empty:
+                st.warning("The query returned 0 rows. Try a different label, relationship type, or direction.")
+            else:
+                st.dataframe(result["table"], width="stretch", hide_index=True)
+        with col_graph:
+            st.markdown("**Highlighted Subgraph** (matched items in red; start node enlarged)")
+            st.plotly_chart(
+                build_graph_figure(graph, pos, highlight_nodes=result["nodes"],
+                                   highlight_edges=result["edges"], focus_nodes=result["focus"]),
+                key="result_graph_chart"
+            )
 
-    if result["chart"] is not None and not result["chart"].empty:
-        columns = list(result["table"].columns)
-        st.plotly_chart(build_aggregation_chart(result["chart"], columns[1], columns[2]),
-                        key="aggregation_chart")
+        if result["chart"] is not None and not result["chart"].empty:
+            columns = list(result["table"].columns)
+            st.plotly_chart(build_aggregation_chart(result["chart"], columns[-2], columns[-1]),
+                            key="aggregation_chart")
 
     # Data Logger
     st.divider()
@@ -1253,7 +2194,7 @@ def render_simulation_section():
 
     with col_log1:
         st.caption("Capture the current query and its result counts into your session trial table:")
-        if st.button("Record Current Trial", type="primary", width="stretch"):
+        if st.button("Record Current Trial", type="primary", width="stretch", disabled=result is None):
             trial_record = {
                 "Trial #": len(st.session_state["trials"]) + 1,
                 "Query Mode": result["mode"],

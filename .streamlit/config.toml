@@ -1,0 +1,3 @@
+[server]
+# Serves ./static so the report's "Open / Download PDF Document" link (/app/static/lab_report.pdf) works.
+enableStaticServing = true

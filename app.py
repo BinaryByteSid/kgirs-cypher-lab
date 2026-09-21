@@ -1,17 +1,17 @@
 """
-Virtual Laboratory: Experiment 10 - Query Knowledge Graphs using Cypher (Streamlit)
+Virtual Laboratory: Experiment 10 - Query Knowledge Graphs with Pattern-Based Queries (Streamlit)
 Knowledge Graphs and Information Retrieval Systems (KGIRS)
 
 Partitioned into the 4 core sections of the base lab template:
-  1. Theory: Knowledge graph concepts, Cypher clauses, objectives, procedure, and terminology.
-  2. Simulation: Sample graph explorer, guided Cypher Query Builder, highlighted results, and trial logger.
+  1. Theory: Knowledge graph concepts, query clauses, objectives, procedure, and terminology.
+  2. Simulation: Sample graph explorer, guided Query Builder, highlighted results, and trial logger.
   3. Quiz: Self-grading conceptual assessment with instant feedback.
   4. Report Generation: Student info, recorded query trials, observations, and downloadable PDF report.
 
-Graph experiment note: as per the course rule, no Neo4j database is used. A small in-memory
-knowledge graph (GRAPH_DATA) is loaded into a networkx MultiDiGraph. The Query Builder produces the
-equivalent Cypher text and executes the same logic directly against the networkx graph. Students can
-also edit the Cypher by hand; a small read-only Cypher interpreter (section 2b) runs the edited query.
+Graph experiment note: A small in-memory knowledge graph (GRAPH_DATA) is loaded into a networkx
+MultiDiGraph. The Query Builder produces pattern-based queries and executes the logic directly
+against the networkx graph. Students can also edit queries by hand; a small read-only query
+interpreter (section 2b) runs the edited query.
 
 Note: No custom CSS is used so that Streamlit native light and dark themes render seamlessly.
 """
@@ -35,10 +35,10 @@ from fpdf import FPDF
 EXPERIMENT_CONFIG = {
     "experiment_no": "Experiment 10",
     "course": "Knowledge Graphs and Information Retrieval Systems (KGIRS)",
-    "title": "Query Knowledge Graphs using Cypher",
+    "title": "Query Knowledge Graphs with Pattern-Based Queries",
     "objectives": [
         "Understand graph database concepts: nodes, relationships, properties, and labels.",
-        "Write and interpret Cypher query patterns using MATCH, WHERE, RETURN, ORDER BY and LIMIT.",
+        "Write and interpret pattern-based queries using MATCH, WHERE, RETURN, ORDER BY and LIMIT.",
         "Perform multi-hop traversals and filtered pattern matches over a knowledge graph.",
         "Retrieve and interpret meaningful information (lists, paths, counts) from a knowledge graph."
     ]
@@ -50,7 +50,7 @@ THEORY_CONTENT = {
 A **knowledge graph** stores facts as a network of connected entities. Instead of rows in tables,
 information is modelled as **nodes** (the entities - people, movies, companies, cities) joined by
 **relationships** (the facts that link them - *acted in*, *directed*, *located in*). This lab uses
-the **property graph model**, the model used by Neo4j and most graph databases:
+the **property graph model**, a standard way to structure graph data:
 
 - **Node**: an entity, e.g. `Keanu Reeves` or `The Matrix`.
 - **Label**: a type tag that groups nodes, written with a colon, e.g. `:Person`, `:Movie`.
@@ -59,12 +59,12 @@ the **property graph model**, the model used by Neo4j and most graph databases:
 - **Property**: a key-value pair stored on a node **or** a relationship,
   e.g. `born: 1964` on a person, or `role: "Neo"` on an `ACTED_IN` relationship.
 
-### What is Cypher?
-**Cypher** is the declarative graph query language created for Neo4j (and standardised in
-openCypher / GQL). *Declarative* means you describe **what** pattern you are looking for, and the
-engine decides **how** to find it. Patterns are drawn with ASCII-art:
+### Pattern-Based Query Language
+Graph queries use a **declarative, pattern-based approach**. *Declarative* means you describe
+**what** pattern you are looking for, and the engine decides **how** to find it. Patterns are
+drawn with ASCII-art:
 
-```cypher
+```
 (a:Person)-[:ACTED_IN]->(m:Movie)
 ```
 
@@ -74,7 +74,7 @@ engine decides **how** to find it. Patterns are drawn with ASCII-art:
 - `-[*1..3]-` is a **variable-length** relationship: any path of 1 to 3 hops.
 - `{name: "The Matrix"}` inside a node is an inline property filter.
 
-### Core Cypher Clauses
+### Core Query Clauses
 | Clause | Purpose | Example |
 |---|---|---|
 | `MATCH` | Declares the graph pattern to find | `MATCH (p:Person)-[:DIRECTED]->(m:Movie)` |
@@ -88,33 +88,33 @@ Aggregate functions such as `count()` group rows automatically by the other retu
 
 ### Workflow & System Overview
 1. **Graph Construction**: The sample knowledge graph (16 nodes, 25 relationships) is loaded from
-   plain Python data into an in-memory `networkx.MultiDiGraph` - no database server is required.
+   plain Python data into an in-memory `networkx.MultiDiGraph`.
 2. **Query Building**: A guided Query Builder turns your choices (pattern mode, labels,
-   relationship types, filters, hop count) into an equivalent Cypher query, which you can also
+   relationship types, filters, hop count) into pattern-based queries, which you can also
    edit by hand.
 3. **Execution**: The same pattern is evaluated directly on the networkx graph (label checks,
-   property comparisons, edge-direction checks, and depth-limited path search). An edited query
-   is run by a small built-in Cypher interpreter that supports read-only MATCH queries.
+   property comparisons, edge-direction checks, and depth-limited path search). Edited queries
+   are run by a built-in query interpreter that supports read-only MATCH patterns.
 4. **Result Analysis**: Results are shown as a table and as a highlighted subgraph, and each
    query can be logged as a trial for your report.
     """,
     "procedure": [
-        "Step 1: Review the theory on nodes, relationships, properties, labels, and the core Cypher clauses.",
+        "Step 1: Review the theory on nodes, relationships, properties, labels, and query clauses.",
         "Step 2: Open the Simulation section and explore the sample movie knowledge graph (graph view, node list, relationship list, and schema).",
         "Step 3: In the Query Builder, choose a query pattern mode (Node Lookup, 1-hop Traversal, Multi-hop Traversal, Filtered Pattern Match, or Aggregation) and set its options.",
-        "Step 4: Read the generated Cypher query and predict what it should return before looking at the results. Optionally edit the query and run your own version.",
+        "Step 4: Read the generated query pattern and predict what it should return before looking at the results. Optionally edit the query and run your own version.",
         "Step 5: Examine the result table and the highlighted subgraph, and compare them with your prediction.",
-        "Step 6: Click 'Record Current Trial' to log the query mode, Cypher text, and result counts.",
+        "Step 6: Click 'Record Current Trial' to log the query mode, query text, and result counts.",
         "Step 7: Repeat with at least one query from each pattern mode (vary labels, directions, hop counts, and filters).",
         "Step 8: Complete the Quiz, then open Report Generation, enter your details and observations, and download the PDF report."
     ],
     "key_terms": {
-        "Node": "An entity in the graph (e.g. a person or a movie), drawn in Cypher as ( ).",
+        "Node": "An entity in the graph (e.g. a person or a movie), drawn as ( ).",
         "Relationship / Edge": "A directed, typed connection between a start node and an end node, drawn as -[ ]->.",
         "Property": "A key-value pair stored on a node or relationship, e.g. born: 1964 or role: \"Neo\".",
         "Label": "A tag that classifies nodes into types, e.g. :Person, :Movie, :Organization, :City.",
         "Relationship Type": "The single name that describes what a relationship means, e.g. ACTED_IN, DIRECTED.",
-        "Cypher": "The declarative, pattern-based query language used by Neo4j and openCypher-compatible databases.",
+        "Pattern-Based Query": "A declarative approach where you describe a pattern (shape) you're looking for, and the engine finds all matches.",
         "Pattern Matching": "Finding every part of the graph that has the same shape as the pattern in a MATCH clause.",
         "Traversal": "Moving from a node to its neighbours by following relationships.",
         "Multi-hop Query": "A query that follows two or more relationships in sequence, e.g. actor -> movie -> studio.",
@@ -449,7 +449,7 @@ def edge_text(graph, u, v, data) -> str:
 
 
 def compare_values(actual, operator, expected) -> bool:
-    """Cypher-style comparison; a missing property (null) never matches."""
+    """Pattern-based comparison; a missing property (null) never matches."""
     if actual is None:
         return False
     if operator in ("CONTAINS", "STARTS WITH", "ENDS WITH"):
@@ -565,7 +565,7 @@ def query_one_hop(graph, start_id, rel_type, direction, limit) -> dict:
 
 
 def find_paths(graph, start_id, max_hops) -> list:
-    """All undirected paths of 1..max_hops from start_id; like Cypher, no relationship repeats in a path."""
+    """All undirected paths of 1..max_hops from start_id; no relationship repeats in a path."""
     paths = []
 
     def walk(node, node_seq, step_seq, used):
@@ -721,11 +721,11 @@ def query_aggregation(graph, group_by, label, top_n) -> dict:
 
 
 # ======================================================================================
-# 2b. CYPHER INTERPRETER: RUNS QUERIES THE STUDENT EDITS BY HAND
+# 2b. QUERY INTERPRETER: RUNS QUERIES THE STUDENT EDITS BY HAND
 # ======================================================================================
-# A small, read-only subset of Cypher evaluated directly on the networkx graph:
+# A small, read-only query interpreter evaluated directly on the networkx graph:
 # MATCH (several patterns / clauses, variable-length paths), WHERE, RETURN (DISTINCT, AS,
-# count()), ORDER BY, SKIP and LIMIT. Relationships are not reused within one MATCH, as in Cypher.
+# count()), ORDER BY, SKIP and LIMIT. Relationships are not reused within one MATCH pattern.
 
 MAX_VAR_HOPS = 5
 MAX_MATCH_STEPS = 50000
@@ -2115,8 +2115,8 @@ def render_cypher_editor(graph, builder_result):
         st.session_state["cypher_generated"] = generated
         st.session_state["cypher_editor"] = generated
 
-    st.markdown("**Cypher Query** (read / write: edit it, then press Ctrl+Enter to run)")
-    text = st.text_area("Cypher query", key="cypher_editor", label_visibility="collapsed",
+    st.markdown("**Query Pattern** (read / write: edit it, then press Ctrl+Enter to run)")
+    text = st.text_area("Query pattern", key="cypher_editor", label_visibility="collapsed",
                         height=max(110, 26 * (generated.count("\n") + 2)))
     edited = " ".join(text.split()) != " ".join(generated.split())
 
@@ -2140,8 +2140,8 @@ def render_cypher_editor(graph, builder_result):
 def render_simulation_section():
     """Renders Section 2: Graph Explorer, Query Builder, Results, and Trial Logger."""
     st.header("Interactive Simulation: Querying a Knowledge Graph")
-    st.info("Explore the sample graph, build a Cypher query with the guided Query Builder (or edit it by hand), "
-            "and log each query as a trial. The graph lives in memory (networkx); no Neo4j database is used.")
+    st.info("Explore the sample graph, build a query pattern with the guided Query Builder (or edit it by hand), "
+            "and log each query as a trial. The graph lives in memory (networkx).")
 
     graph = build_knowledge_graph()
     pos = compute_layout(SIMULATION_CONFIG["layout_seed"],

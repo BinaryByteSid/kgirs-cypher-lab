@@ -1,28 +1,17 @@
-# Experiment 10: Query Knowledge Graphs using Cypher
+# Experiment 10: Query Knowledge Graphs with Pattern-Based Queries
 
 **Course:** Knowledge Graphs and Information Retrieval Systems (KGIRS) - Virtual Lab
 
 ## About the experiment
 
-This virtual lab teaches how to query a knowledge graph with Cypher, the declarative, pattern-based
-query language used by Neo4j. Students explore a small movie knowledge graph with 16 nodes
-(people, movies, studios, cities) and 25 typed, directed relationships (`ACTED_IN`, `DIRECTED`,
-`PRODUCED`, `DISTRIBUTED`, `FOUNDED`, `LOCATED_IN`, `BORN_IN`). A guided Query Builder turns their
-choices into an equivalent Cypher query for five query patterns:
+This virtual lab teaches how to query a knowledge graph using pattern-based queries — a declarative approach to finding connected data. Students explore a small movie knowledge graph with 16 nodes (people, movies, studios, cities) and 25 typed, directed relationships (`ACTED_IN`, `DIRECTED`, `PRODUCED`, `DISTRIBUTED`, `FOUNDED`, `LOCATED_IN`, `BORN_IN`). A guided Query Builder turns their choices into pattern-based queries for five query types:
 - node lookup with property filters
 - one-hop relationship traversal with a chosen direction
-- variable-length multi-hop traversal (`[*1..3]`)
+- variable-length multi-hop traversal (paths of 1–3 hops)
 - filtered pattern matching
 - aggregation with `count()`, `ORDER BY` and `LIMIT`
 
-Each query runs against the graph and returns a result table and a highlighted subgraph.
-The generated Cypher can also be edited by hand. A small built-in interpreter runs the edited query
-(read-only `MATCH` / `WHERE` / `RETURN` / `ORDER BY` / `SKIP` / `LIMIT`, including `count()` and
-variable-length paths), and write clauses such as `CREATE`, `SET` or `DELETE` are blocked.
-Students log their queries as trials, take a 10-question concept quiz, and download a PDF lab
-report. As the course rule for graph experiments requires, the app uses no Neo4j database. The
-graph is stored as plain Python data and loaded into an in-memory `networkx` graph, and the app
-runs the same logic as each Cypher query directly on that graph.
+Each query runs against the graph and returns a result table and a highlighted subgraph. Queries can also be edited by hand. A small built-in interpreter runs custom queries (read-only patterns with `MATCH` / `WHERE` / `RETURN` / `ORDER BY` / `SKIP` / `LIMIT`, including `count()` and variable-length paths); write operations such as `CREATE`, `SET` or `DELETE` are blocked. Students log their queries as trials, take a 10-question concept quiz, and download a PDF lab report. The graph is stored as plain Python data and loaded into an in-memory `networkx` graph for fast query execution.
 
 ## How to run
 

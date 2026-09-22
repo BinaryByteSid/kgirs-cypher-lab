@@ -44,23 +44,108 @@ EXPERIMENT_CONFIG = {
     ]
 }
 
+# Case-study illustration. Streamlit renders it as an image, so "currentColor" is swapped for a real
+# ink colour per theme before display; the node colours and shapes match the ones the Simulation draws.
+PURPOSE_ART = """<svg viewBox="0 0 960 330" width="100%" xmlns="http://www.w3.org/2000/svg" role="img"
+     aria-label="The same catalogue shown as three separate tables on the left and as one knowledge graph on the right">
+  <defs>
+    <marker id="kgArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" opacity="0.5"/>
+    </marker>
+    <marker id="kgArrowGo" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#1baf7a"/>
+    </marker>
+  </defs>
+
+  <rect x="16" y="44" width="272" height="252" rx="14" fill="currentColor" fill-opacity="0.035"/>
+  <rect x="398" y="44" width="548" height="252" rx="14" fill="currentColor" fill-opacity="0.035"/>
+
+  <text x="30" y="32" font-size="15" font-weight="700" fill="currentColor">Catalogue in tables</text>
+  <text x="412" y="32" font-size="15" font-weight="700" fill="currentColor">The same catalogue as a knowledge graph</text>
+
+  <g stroke="currentColor" stroke-opacity="0.22" fill="none">
+    <rect x="34" y="60" width="186" height="60" rx="7"/>
+    <rect x="34" y="140" width="186" height="60" rx="7"/>
+    <rect x="34" y="220" width="186" height="60" rx="7"/>
+    <path d="M34 82 H220 M34 101 H220 M34 162 H220 M34 181 H220 M34 242 H220 M34 261 H220"/>
+    <path d="M140 60 V120 M140 140 V200 M140 220 V280"/>
+  </g>
+  <rect x="34" y="60" width="186" height="22" rx="7" fill="#2a78d6" fill-opacity="0.2"/>
+  <rect x="34" y="140" width="186" height="22" rx="7" fill="#eb6834" fill-opacity="0.2"/>
+  <rect x="34" y="220" width="186" height="22" rx="7" fill="#1baf7a" fill-opacity="0.2"/>
+  <g font-size="12" fill="currentColor" fill-opacity="0.85">
+    <text x="44" y="76">people</text>
+    <text x="44" y="156">films</text>
+    <text x="44" y="236">studios</text>
+  </g>
+
+  <g stroke="#e34948" stroke-opacity="0.75" stroke-dasharray="5 4" fill="none">
+    <path d="M226 96 C258 106, 258 146, 230 156"/>
+    <path d="M226 176 C258 186, 258 226, 230 236"/>
+  </g>
+  <g font-size="11" fill="#e34948" fill-opacity="0.95">
+    <text x="252" y="130">JOIN</text>
+    <text x="252" y="210">JOIN</text>
+  </g>
+  <text x="34" y="306" font-size="12" fill="currentColor" fill-opacity="0.65">
+    Every extra step is another join.</text>
+
+  <path d="M300 168 H378" stroke="#1baf7a" stroke-width="3" fill="none" marker-end="url(#kgArrowGo)"/>
+  <text x="339" y="154" font-size="12" font-weight="600" fill="#1baf7a" text-anchor="middle">load once</text>
+
+  <g stroke="currentColor" stroke-opacity="0.45" stroke-width="2" fill="none" marker-end="url(#kgArrow)">
+    <path d="M488 110 L616 152"/>
+    <path d="M488 222 L616 186"/>
+    <path d="M664 156 L762 116"/>
+    <path d="M796 134 L868 208"/>
+  </g>
+  <g font-size="11" fill="currentColor" fill-opacity="0.7">
+    <text x="512" y="150">ACTED_IN</text>
+    <text x="512" y="200">DIRECTED</text>
+    <text x="672" y="180">DISTRIBUTED</text>
+    <text x="812" y="186">LOCATED_IN</text>
+  </g>
+
+  <circle cx="470" cy="97" r="18" fill="#2a78d6"/>
+  <circle cx="470" cy="235" r="18" fill="#2a78d6"/>
+  <rect x="622" y="150" width="36" height="36" rx="5" fill="#eb6834"/>
+  <polygon points="782,90 806,114 782,138 758,114" fill="#1baf7a"/>
+  <polygon points="884,212 906,250 862,250" fill="#4a3aa7"/>
+  <g font-size="12" fill="currentColor" text-anchor="middle">
+    <text x="470" y="68">Keanu Reeves</text>
+    <text x="470" y="272">Lana Wachowski</text>
+    <text x="640" y="212">The Matrix</text>
+    <text x="782" y="78">Warner Bros</text>
+    <text x="884" y="272">Los Angeles</text>
+  </g>
+  <text x="412" y="306" font-size="12" fill="#1baf7a" fill-opacity="0.95">
+    One pattern walks the whole chain.</text>
+</svg>
+"""
+
 CASE_STUDY = {
     "scenario": """
 ### Case study: the "what should I watch next?" problem
 
-**StreamPick** is a small streaming service. Its catalogue sits in ordinary tables: one for people,
-one for films, one for studios. The product team wants three things on the home page:
-
-- *"Because you watched The Matrix"* - films connected to the one you just finished.
-- *"More from this film-maker"* - everything a person touched, in either direction.
-- *"Filmed near you"* - how a film reaches a city, through the studio behind it.
-
+**StreamPick** is a small streaming service. Its catalogue sits in ordinary tables - one for people,
+one for films, one for studios - and the product team wants three things on the home page:
+""",
+    "home_page_asks": [
+        {"title": "Because you watched The Matrix",
+         "detail": "Films connected to the one you just finished."},
+        {"title": "More from this film-maker",
+         "detail": "Everything a person touched, in either direction."},
+        {"title": "Filmed near you",
+         "detail": "How a film reaches a city, through the studio behind it."},
+    ],
+    "closing": """
 Every one of these is a question about **connections**, and connections are what tables handle
 worst: each extra step is another join. So the team loads the catalogue into a **knowledge graph** -
 16 nodes and 25 relationships covering people, films, studios and cities - and asks its questions as
 **patterns** instead.
 
-You are the data engineer on that team. The graph below is the catalogue, and the queries are yours to run.
+You are the data engineer on that team. The graph in the Simulation is that catalogue, and the
+queries are yours to run.
 """,
     "tasks": [
         {"ask": "Which people in the catalogue were born after 1970?",
@@ -2055,12 +2140,32 @@ DEFAULT_NOTES = (
 # 5. SECTION RENDERERS
 # ======================================================================================
 
+def purpose_art() -> str:
+    """The illustration, inked for the active theme: an SVG shown as an image cannot inherit page colours."""
+    theme_type = getattr(getattr(st, "context", None), "theme", None)
+    dark = getattr(theme_type, "type", "light") == "dark"
+    return PURPOSE_ART.replace("currentColor", "#e6e8ec" if dark else "#1f2937")
+
+
 def render_purpose_section():
     """Case study that sets up why the lab is worth running."""
+    st.image(purpose_art(), width="stretch")
     st.markdown(CASE_STUDY["scenario"])
+
+    for col, ask in zip(st.columns(3, gap="medium"), CASE_STUDY["home_page_asks"]):
+        with col, st.container(border=True):
+            st.markdown(f"**{ask['title']}**")
+            st.caption(ask["detail"])
+    st.markdown(CASE_STUDY["closing"])
+
     st.subheader("Your tasks")
-    for i, task in enumerate(CASE_STUDY["tasks"], start=1):
-        st.markdown(f"**{i}. {task['ask']}**  \n{task['how']}")
+    tasks = CASE_STUDY["tasks"]
+    for row_start in range(0, len(tasks), 2):
+        for col, task in zip(st.columns(2, gap="medium"), tasks[row_start:row_start + 2]):
+            with col, st.container(border=True):
+                st.markdown(f"**{tasks.index(task) + 1}. {task['ask']}**")
+                st.caption(task["how"])
+
     st.subheader("Working through the lab")
     st.markdown(CASE_STUDY["route"])
 

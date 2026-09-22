@@ -44,6 +44,84 @@ EXPERIMENT_CONFIG = {
     ]
 }
 
+CASE_STUDY = {
+    "scenario": """
+### Case study: the "what should I watch next?" problem
+
+**StreamPick** is a small streaming service. Its catalogue sits in ordinary tables: one for people,
+one for films, one for studios. The product team wants three things on the home page:
+
+- *"Because you watched The Matrix"* - films connected to the one you just finished.
+- *"More from this film-maker"* - everything a person touched, in either direction.
+- *"Filmed near you"* - how a film reaches a city, through the studio behind it.
+
+Every one of these is a question about **connections**, and connections are what tables handle
+worst: each extra step is another join. So the team loads the catalogue into a **knowledge graph** -
+16 nodes and 25 relationships covering people, films, studios and cities - and asks its questions as
+**patterns** instead.
+
+You are the data engineer on that team. The graph below is the catalogue, and the queries are yours to run.
+""",
+    "tasks": [
+        {"ask": "Which people in the catalogue were born after 1970?",
+         "how": "Simulation -> Node Lookup: label `Person`, property `born`, operator `>`, value `1970`. "
+                "Watch what happens to someone born exactly in 1970."},
+        {"ask": "What is Christopher Nolan connected to - and does the arrow direction matter?",
+         "how": "Simulation -> Relationship Traversal (1-hop) from Christopher Nolan. Run it outgoing, "
+                "then incoming, and predict the row count before you look."},
+        {"ask": "Which city can we reach from Keanu Reeves, and how many hops does it take?",
+         "how": "Simulation -> Multi-hop Traversal from Keanu Reeves with end label `City`. Try 2 hops, then 3."},
+        {"ask": "Now ask the same questions about a domain of your own.",
+         "how": "Open **Graph data -> My own graph**, build a small graph (authors and books, players and "
+                "teams, anything), and run the three query modes again on it."},
+    ],
+    "route": """
+1. **Theory** - the vocabulary: nodes, labels, relationships, properties, and the clauses
+   `MATCH`, `WHERE`, `RETURN`, `ORDER BY`, `LIMIT`.
+2. **Simulation** - answer the tasks above. Record each query as a trial from the sidebar.
+3. **Quiz** - ten questions on what you just did.
+4. **Report Generation** - your trials, observations and score as a PDF.
+5. **Certificate** - proof you finished, once the quiz is submitted.
+""",
+}
+
+GRAPH_SOURCES = ["Sample movie graph", "My own graph"]
+
+# Starter rows for the student's own graph, in a different domain from the sample.
+CUSTOM_GRAPH_SEED = {
+    "nodes": [
+        {"name": "Ada Lovelace", "label": "Person"},
+        {"name": "Notes on the Analytical Engine", "label": "Book"},
+        {"name": "London", "label": "City"},
+    ],
+    "relationships": [
+        {"source": "Ada Lovelace", "type": "WROTE", "target": "Notes on the Analytical Engine"},
+        {"source": "Ada Lovelace", "type": "BORN_IN", "target": "London"},
+    ],
+}
+
+REFERENCES = {
+    "concepts": [
+        "Hogan, A., et al. (2021). *Knowledge Graphs.* ACM Computing Surveys, 54(4), 1-37. "
+        "https://doi.org/10.1145/3447772",
+        "Angles, R., & Gutierrez, C. (2008). *Survey of Graph Database Models.* "
+        "ACM Computing Surveys, 40(1), 1-39.",
+        "Angles, R. (2018). *The Property Graph Database Model.* Alberto Mendelzon International "
+        "Workshop on Foundations of Data Management (AMW).",
+        "ISO/IEC 39075:2024. *Information technology - Database languages - GQL*: the international "
+        "standard for pattern-based graph query languages.",
+        "Robinson, I., Webber, J., & Eifrem, E. (2015). *Graph Databases: New Opportunities for "
+        "Connected Data* (2nd ed.). O'Reilly Media.",
+    ],
+    "tools": [
+        "NetworkX - in-memory graph structures and traversal. https://networkx.org/documentation/stable/",
+        "Streamlit - the web interface of this lab. https://docs.streamlit.io",
+        "Plotly for Python - the graph and chart drawing. https://plotly.com/python/",
+        "pandas - result tables and the trial log. https://pandas.pydata.org/docs/",
+        "fpdf2 - the PDF lab report and certificate. https://py-pdf.github.io/fpdf2/",
+    ],
+}
+
 THEORY_CONTENT = {
     "background": """
 ### Overview & Principles
@@ -101,10 +179,10 @@ Aggregate functions such as `count()` group rows automatically by the other retu
     "procedure": [
         "Step 1: Review the theory on nodes, relationships, properties, labels, and query clauses.",
         "Step 2: Open the Simulation section and explore the sample movie knowledge graph (graph view, node list, relationship list, and schema).",
-        "Step 3: In the Query Builder, choose a query pattern mode (Node Lookup, 1-hop Traversal, Multi-hop Traversal, Filtered Pattern Match, or Aggregation) and set its options.",
+        "Step 3: In the Query Builder, choose a query pattern mode (Node Lookup, Relationship Traversal (1-hop), or Multi-hop Traversal) and set its options.",
         "Step 4: Read the generated query pattern and predict what it should return before looking at the results. Optionally edit the query and run your own version.",
         "Step 5: Examine the result table and the highlighted subgraph, and compare them with your prediction.",
-        "Step 6: Click 'Record Current Trial' to log the query mode, query text, and result counts.",
+        "Step 6: Click 'Record Current Trial' in the sidebar to log the query mode, query text, and result counts.",
         "Step 7: Repeat with at least one query from each pattern mode (vary labels, directions, hop counts, and filters).",
         "Step 8: Complete the Quiz, then open Report Generation, enter your details and observations, and download the PDF report."
     ],
@@ -178,16 +256,8 @@ SIMULATION_CONFIG = {
         "Node Lookup": "Node Lookup",
         "Relationship Traversal (1-hop)": "1-Hop Traversal",
         "Multi-hop Traversal": "Multi-Hop",
-        "Filtered Pattern Match": "Pattern Match",
-        "Aggregation": "Aggregation",
     },
     "hop_options": [2, 3],
-    "aggregation_modes": [
-        "Outgoing relationships per node",
-        "All relationships per node (degree)",
-        "Relationships per type",
-        "Nodes per label",
-    ],
     # Node colors follow the label (fixed order, never re-assigned by rank); shape is a second cue.
     "label_styles": {
         "Person": {"color": "#2a78d6", "symbol": "circle"},
@@ -195,7 +265,15 @@ SIMULATION_CONFIG = {
         "Organization": {"color": "#1baf7a", "symbol": "diamond"},
         "City": {"color": "#4a3aa7", "symbol": "triangle-up"},
     },
+    # Labels a custom graph invents cycle through these instead.
+    "extra_label_styles": [
+        {"color": "#b8348a", "symbol": "pentagon"},
+        {"color": "#c08a12", "symbol": "hexagon"},
+        {"color": "#2c8f95", "symbol": "star"},
+        {"color": "#7a5c3e", "symbol": "cross"},
+    ],
     "highlight_color": "#e34948",
+    "faded_text_color": "rgba(140, 140, 140, 0.9)",
     "edge_color": "rgba(137, 135, 129, 0.65)",
     "faded_edge_color": "rgba(137, 135, 129, 0.18)",
     "bar_color": "#2a78d6",
@@ -212,9 +290,16 @@ SIMULATION_CONFIG = {
         "p6": (7.0, 1.0), "m3": (7.0, 3.2), "m4": (7.0, 5.6), "p7": (5.8, 7.2),
         "p5": (9.2, 2.2), "p8": (9.2, 6.6), "o2": (10.4, 4.4), "c2": (12.2, 4.4),
     },
-    "graph_height": 560,
+    "graph_height": 600,
     "max_limit": 50,
+    "all_names_max_nodes": 12,
+    "node_label_size": 14,
+    "edge_label_size": 12,
+    "legend_font_size": 15,
 }
+
+# One knob for the whole interface: Streamlit sizes its text in rem, so the root size scales everything.
+BASE_FONT_PX = 18
 
 ANY = "(any)"
 NO_FILTER = "(no filter)"
@@ -354,35 +439,78 @@ QUIZ_QUESTIONS = [
 # 2. SIMULATION ENGINE: IN-MEMORY KNOWLEDGE GRAPH & QUERY EXECUTION
 # ======================================================================================
 
-@st.cache_resource
-def build_knowledge_graph() -> nx.MultiDiGraph:
-    """Loads GRAPH_DATA into a networkx MultiDiGraph (built once and shared; never mutated)."""
+def graph_from_data(nodes, relationships) -> nx.MultiDiGraph:
+    """Builds a MultiDiGraph from plain node/relationship dictionaries."""
     graph = nx.MultiDiGraph()
-    for node in GRAPH_DATA["nodes"]:
+    for node in nodes:
         props = {k: v for k, v in node.items() if k not in ("id", "label")}
         graph.add_node(node["id"], label=node["label"], props=props)
-    for i, rel in enumerate(GRAPH_DATA["relationships"], start=1):
-        graph.add_edge(rel["source"], rel["target"], key=f"r{i}",
-                       type=rel["type"], props=dict(rel.get("properties", {})))
+    for i, rel in enumerate(relationships, start=1):
+        if rel["source"] in graph and rel["target"] in graph:
+            graph.add_edge(rel["source"], rel["target"], key=f"r{i}",
+                           type=rel["type"], props=dict(rel.get("properties", {})))
     return graph
 
 
+@st.cache_resource
+def build_knowledge_graph() -> nx.MultiDiGraph:
+    """The sample movie graph (built once and shared; never mutated)."""
+    return graph_from_data(GRAPH_DATA["nodes"], GRAPH_DATA["relationships"])
+
+
+@st.cache_resource
+def build_custom_graph(nodes: tuple, relationships: tuple) -> nx.MultiDiGraph:
+    """The student's own graph; the (name, label) and (source, type, target) tuples are the cache key."""
+    return graph_from_data(
+        [{"id": node_id, "label": label, "name": name} for node_id, label, name in nodes],
+        [{"source": source, "target": target, "type": rel_type} for source, rel_type, target in relationships])
+
+
+def graph_signature(graph) -> tuple:
+    """A hashable summary of a graph, used as a cache key for its layout."""
+    return (tuple(sorted(graph.nodes)),
+            tuple(sorted((u, v, k) for u, v, k in graph.edges(keys=True))))
+
+
 @st.cache_data
-def compute_layout(seed: int, fixed_positions: tuple) -> dict:
+def compute_layout(signature: tuple, fixed_positions: tuple, seed: int, _graph) -> dict:
     """Fixed 2-D positions for every node so the graph looks the same across reruns."""
-    graph = build_knowledge_graph()
-    fixed = dict(fixed_positions)
+    simple = nx.Graph(_graph)
+    if not simple:
+        return {}
+    fixed = {n: xy for n, xy in dict(fixed_positions).items() if n in simple}
     if not fixed:
-        pos = nx.spring_layout(nx.Graph(graph), seed=seed, k=0.9, iterations=300)
+        pos = nx.spring_layout(simple, seed=seed, k=0.9, iterations=300)
         return {n: (float(xy[0]), float(xy[1])) for n, xy in pos.items()}
     xs = [p[0] for p in fixed.values()]
     ys = [p[1] for p in fixed.values()]
     cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
     scale = max(max(xs) - min(xs), max(ys) - min(ys)) / 2 or 1.0
-    initial = {n: ((x - cx) / scale, (y - cy) / scale) for n, (x, y) in fixed.items() if n in graph}
-    pos = nx.spring_layout(nx.Graph(graph), seed=seed, pos=initial or None,
-                           fixed=list(initial) or None, k=0.9, iterations=300)
+    initial = {n: ((x - cx) / scale, (y - cy) / scale) for n, (x, y) in fixed.items()}
+    pos = nx.spring_layout(simple, seed=seed, pos=initial, fixed=list(initial), k=0.9, iterations=300)
     return {n: (float(xy[0]), float(xy[1])) for n, xy in pos.items()}
+
+
+def layout_for(graph) -> dict:
+    """Hand-placed coordinates anchor the sample graph; any other graph is laid out by spring layout."""
+    return compute_layout(graph_signature(graph),
+                          tuple(sorted(SIMULATION_CONFIG["node_positions"].items())),
+                          SIMULATION_CONFIG["layout_seed"], graph)
+
+
+def label_style(label) -> dict:
+    """Colour and shape for a node label; labels outside the sample graph cycle through spare styles."""
+    styles = SIMULATION_CONFIG["label_styles"]
+    if label in styles:
+        return styles[label]
+    spare = SIMULATION_CONFIG["extra_label_styles"]
+    return spare[sum(map(ord, label)) % len(spare)]
+
+
+def label_order_key(label) -> tuple:
+    """Sample labels keep their fixed order; new labels follow alphabetically."""
+    order = list(SIMULATION_CONFIG["label_styles"])
+    return (order.index(label), "") if label in order else (len(order), label)
 
 
 def node_name(graph, node_id) -> str:
@@ -398,14 +526,12 @@ def node_display(graph, node_id) -> str:
 
 
 def sorted_node_ids(graph, label=ANY) -> list:
-    order = list(SIMULATION_CONFIG["label_styles"])
     ids = [n for n in graph.nodes if label == ANY or node_label(graph, n) == label]
-    return sorted(ids, key=lambda n: (order.index(node_label(graph, n)), node_name(graph, n)))
+    return sorted(ids, key=lambda n: (label_order_key(node_label(graph, n)), node_name(graph, n)))
 
 
 def graph_labels(graph) -> list:
-    order = list(SIMULATION_CONFIG["label_styles"])
-    return sorted({node_label(graph, n) for n in graph.nodes}, key=order.index)
+    return sorted({node_label(graph, n) for n in graph.nodes}, key=label_order_key)
 
 
 def relationship_types(graph) -> list:
@@ -628,96 +754,6 @@ def query_multi_hop(graph, start_id, max_hops, target_label, limit) -> dict:
     scope = f"{start_name} | 1..{max_hops} hops" + ("" if target_label == ANY else f" | {target_label}")
     return make_result("Multi-Hop", scope, cypher, rows, ["Hops", "End Node", "End Label", "Path"],
                        nodes, edges, summary, focus=[start_id])
-
-
-def query_filtered_pattern(graph, rel_type, source_label, target_label, limit) -> dict:
-    """MATCH (a:Label)-[r:TYPE]->(b:Label) RETURN a, b."""
-    cypher = (
-        f"MATCH {node_pattern('a', source_label)}-[r:{rel_type}]->{node_pattern('b', target_label)}\n"
-        "RETURN a.name AS source, type(r) AS relationship, b.name AS target, properties(r) AS relProps\n"
-        "ORDER BY source, target"
-    )
-    cypher = with_limit(cypher, limit)
-
-    hits = []
-    for u, v, k, d in graph.edges(keys=True, data=True):
-        if d["type"] != rel_type:
-            continue
-        if source_label != ANY and node_label(graph, u) != source_label:
-            continue
-        if target_label != ANY and node_label(graph, v) != target_label:
-            continue
-        hits.append((u, v, k, d))
-    hits = apply_limit(sorted(hits, key=lambda h: (node_name(graph, h[0]), node_name(graph, h[1]))), limit)
-
-    rows = [[node_name(graph, u), node_label(graph, u), d["type"], node_name(graph, v),
-             node_label(graph, v), format_props(d["props"])] for u, v, k, d in hits]
-    nodes = {h[0] for h in hits} | {h[1] for h in hits}
-    edges = {(u, v, k) for u, v, k, _ in hits}
-    src = "any node" if source_label == ANY else f":{source_label}"
-    tgt = "any node" if target_label == ANY else f":{target_label}"
-    summary = f"{len(hits)} {rel_type} relationship(s) match the pattern ({src})-[:{rel_type}]->({tgt})."
-    scope = f"{source_label if source_label != ANY else 'Any'} -{rel_type}-> {target_label if target_label != ANY else 'Any'}"
-    return make_result("Pattern Match", scope, cypher, rows,
-                       ["Source", "Source Label", "Relationship", "Target", "Target Label", "Rel Properties"],
-                       nodes, edges, summary)
-
-
-def query_aggregation(graph, group_by, label, top_n) -> dict:
-    """count() aggregations with ORDER BY ... DESC and LIMIT."""
-    groups = []  # (group, count, node ids, edge ids)
-    if group_by in SIMULATION_CONFIG["aggregation_modes"][:2]:
-        outgoing_only = group_by == SIMULATION_CONFIG["aggregation_modes"][0]
-        arrow = "->" if outgoing_only else "-"
-        cypher = (
-            f"MATCH {node_pattern('n', label)}-[r]{arrow}()\n"
-            "RETURN n.name AS node, count(r) AS relCount\n"
-            "ORDER BY relCount DESC, node ASC"
-        )
-        for n in sorted_node_ids(graph, label):
-            edges = {(u, v, k) for u, v, k in graph.out_edges(n, keys=True)}
-            if not outgoing_only:
-                edges |= {(u, v, k) for u, v, k in graph.in_edges(n, keys=True)}
-            if edges:
-                groups.append((node_name(graph, n), len(edges), {n}, edges))
-        group_col, count_col = "Node", "Relationship Count"
-    elif group_by == SIMULATION_CONFIG["aggregation_modes"][2]:
-        cypher = (
-            "MATCH ()-[r]->()\n"
-            "RETURN type(r) AS relType, count(r) AS relCount\n"
-            "ORDER BY relCount DESC, relType ASC"
-        )
-        for rel_type in relationship_types(graph):
-            edges = {(u, v, k) for u, v, k, d in graph.edges(keys=True, data=True) if d["type"] == rel_type}
-            nodes = {e[0] for e in edges} | {e[1] for e in edges}
-            groups.append((rel_type, len(edges), nodes, edges))
-        group_col, count_col = "Relationship Type", "Relationship Count"
-    else:
-        cypher = (
-            "MATCH (n)\n"
-            "RETURN labels(n)[0] AS label, count(n) AS nodeCount\n"
-            "ORDER BY nodeCount DESC, label ASC"
-        )
-        for lab in graph_labels(graph):
-            nodes = set(sorted_node_ids(graph, lab))
-            groups.append((lab, len(nodes), nodes, set()))
-        group_col, count_col = "Label", "Node Count"
-    cypher = with_limit(cypher, top_n)
-
-    groups = sorted(groups, key=lambda g: (-g[1], g[0]))[:top_n]
-    rows = [[i + 1, g[0], g[1]] for i, g in enumerate(groups)]
-    nodes = set().union(*(g[2] for g in groups)) if groups else set()
-    edges = set().union(*(g[3] for g in groups)) if groups else set()
-    chart = pd.DataFrame({"group": [g[0] for g in groups], "count": [g[1] for g in groups]})
-    if groups:
-        summary = (f"Top {len(groups)} by {group_by.lower()}: "
-                   f"{groups[0][0]} leads with {groups[0][1]}.")
-    else:
-        summary = f"No groups found for {group_by.lower()}."
-    scope = group_by + ("" if label == ANY or group_by not in SIMULATION_CONFIG["aggregation_modes"][:2]
-                        else f" | {label}")
-    return make_result("Aggregation", scope, cypher, rows, ["Rank", group_col, count_col],
-                       nodes, edges, summary, chart=chart)
 
 
 # ======================================================================================
@@ -1676,42 +1712,62 @@ def build_graph_figure(graph, pos, highlight_nodes=None, highlight_edges=None,
         ))
     fig.add_trace(go.Scatter(
         x=mid_x, y=mid_y, mode="markers+text", text=mid_text, hovertext=mid_hover,
-        hoverinfo="text", textfont=dict(size=9), showlegend=False,
+        hoverinfo="text", textfont=dict(size=cfg["edge_label_size"]), showlegend=False,
         marker=dict(size=14, opacity=0)
     ))
 
-    for label, style in cfg["label_styles"].items():
+    # Names of unmatched nodes only stay on while they still have room to sit apart.
+    show_all_names = (not highlighting) or graph.number_of_nodes() <= cfg["all_names_max_nodes"]
+    # Neighbours across the x axis put their names on opposite sides, so side-by-side labels never collide.
+    by_x = sorted(graph.nodes, key=lambda n: (pos[n][0], pos[n][1]))
+    name_above = {n: bool(i % 2) for i, n in enumerate(by_x)}
+
+    def node_hover(node_id, label):
+        props = graph.nodes[node_id]["props"]
+        extra = "".join(f"<br>{k}: {v}" for k, v in props.items() if k != "name")
+        return f"<b>{props['name']}</b><br>:{label}{extra}"
+
+    for label in graph_labels(graph):
+        style = label_style(label)
         ids = sorted_node_ids(graph, label)
         if not ids:
             continue
-        matched = [(not highlighting) or n in highlight_nodes for n in ids]
-        hover = []
-        for n in ids:
-            props = graph.nodes[n]["props"]
-            extra = "".join(f"<br>{k}: {v}" for k, v in props.items() if k != "name")
-            hover.append(f"<b>{props['name']}</b><br>:{label}{extra}")
-        fig.add_trace(go.Scatter(
-            x=[pos[n][0] for n in ids],
-            y=[pos[n][1] for n in ids],
-            mode="markers+text",
-            name=label,
-            text=[node_name(graph, n) if m else "" for n, m in zip(ids, matched)],
-            textposition="bottom center",
-            textfont=dict(size=11),
-            hovertext=hover,
-            hoverinfo="text",
-            marker=dict(
-                symbol=style["symbol"],
-                color=style["color"],
-                size=[cfg["focus_size"] if n in focus_nodes else cfg["node_size"] for n in ids],
-                opacity=[1.0 if m else cfg["faded_opacity"] for m in matched],
-                line=dict(
-                    width=[4 if n in focus_nodes else (2.5 if highlighting and m else 0)
-                           for n, m in zip(ids, matched)],
-                    color=[cfg["highlight_color"] if highlighting and m else style["color"] for m in matched]
+        hit = [n for n in ids if (not highlighting) or n in highlight_nodes]
+        missed = [n for n in ids if n not in hit]
+
+        # Two traces per label so unmatched nodes keep their names in a quieter colour.
+        def node_trace(group, matched, show_in_legend, label=label, style=style):
+            text_font = dict(size=cfg["node_label_size"])
+            if not matched:
+                text_font["color"] = cfg["faded_text_color"]
+            return go.Scatter(
+                x=[pos[n][0] for n in group],
+                y=[pos[n][1] for n in group],
+                mode="markers+text",
+                name=label,
+                legendgroup=label,
+                showlegend=show_in_legend,
+                text=[node_name(graph, n) if (matched or show_all_names) else "" for n in group],
+                textposition=["top center" if name_above[n] else "bottom center" for n in group],
+                textfont=text_font,
+                hovertext=[node_hover(n, label) for n in group],
+                hoverinfo="text",
+                marker=dict(
+                    symbol=style["symbol"],
+                    color=style["color"],
+                    size=[cfg["focus_size"] if n in focus_nodes else cfg["node_size"] for n in group],
+                    opacity=1.0 if matched else cfg["faded_opacity"],
+                    line=dict(
+                        width=[4 if n in focus_nodes else (2.5 if highlighting and matched else 0)
+                               for n in group],
+                        color=cfg["highlight_color"] if (highlighting and matched) else style["color"]
+                    )
                 )
             )
-        ))
+
+        fig.add_trace(node_trace(hit, True, True))
+        if missed:
+            fig.add_trace(node_trace(missed, False, False))
 
     xs = [p[0] for p in pos.values()]
     ys = [p[1] for p in pos.values()]
@@ -1721,14 +1777,15 @@ def build_graph_figure(graph, pos, highlight_nodes=None, highlight_edges=None,
         margin=dict(l=10, r=10, t=30, b=10),
         hovermode="closest",
         dragmode="pan",
+        font=dict(size=cfg["legend_font_size"]),
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0),
-        xaxis=dict(visible=False, range=[min(xs) - 0.15, max(xs) + 0.15]),
-        yaxis=dict(visible=False, range=[min(ys) - 0.18, max(ys) + 0.12]),
+        xaxis=dict(visible=False, range=[min(xs) - 0.3, max(xs) + 0.3]),
+        yaxis=dict(visible=False, range=[min(ys) - 0.25, max(ys) + 0.15]),
     )
     return fig
 
 
-def build_aggregation_chart(chart_df: pd.DataFrame, group_label: str, count_label: str) -> go.Figure:
+def build_count_chart(chart_df: pd.DataFrame, group_label: str, count_label: str) -> go.Figure:
     fig = go.Figure(go.Bar(
         x=chart_df["count"],
         y=chart_df["group"],
@@ -1742,6 +1799,7 @@ def build_aggregation_chart(chart_df: pd.DataFrame, group_label: str, count_labe
         title=f"{count_label} by {group_label}",
         xaxis_title=count_label,
         yaxis=dict(autorange="reversed"),
+        font=dict(size=SIMULATION_CONFIG["legend_font_size"]),
         height=max(260, 48 * len(chart_df) + 110),
         margin=dict(l=20, r=40, t=40, b=20),
         bargap=0.35
@@ -1754,7 +1812,7 @@ def build_aggregation_chart(chart_df: pd.DataFrame, group_label: str, count_labe
 # ======================================================================================
 
 # Long free-text trial columns are listed below the trials table instead of being truncated in it.
-PDF_LONG_TEXT_COLUMNS = ["Cypher Query", "Summary"]
+PDF_LONG_TEXT_COLUMNS = ["Query", "Summary"]
 
 
 def pdf_safe(text) -> str:
@@ -1886,16 +1944,16 @@ def generate_pdf_report(student_name: str, student_id: str, date_str: str,
             pdf.ln(4)
             pdf.set_font("Helvetica", "B", 10)
             pdf.set_text_color(30, 58, 138)
-            pdf.cell(0, 6, "Executed Cypher Queries", new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 6, "Executed Queries", new_x="LMARGIN", new_y="NEXT")
             for _, row in trials_df.iterrows():
                 pdf.set_font("Helvetica", "B", 8)
                 pdf.set_text_color(51, 65, 85)
                 pdf.cell(0, 5, pdf_safe(f"Trial {row.get('Trial #', '')} - {row.get('Query Mode', '')}"),
                          new_x="LMARGIN", new_y="NEXT")
-                if "Cypher Query" in long_cols:
+                if "Query" in long_cols:
                     pdf.set_font("Courier", "", 8)
                     pdf.set_text_color(15, 23, 42)
-                    pdf.multi_cell(0, 4, pdf_safe(row["Cypher Query"]), new_x="LMARGIN", new_y="NEXT")
+                    pdf.multi_cell(0, 4, pdf_safe(row["Query"]), new_x="LMARGIN", new_y="NEXT")
                 if "Summary" in long_cols:
                     pdf.set_font("Helvetica", "I", 8)
                     pdf.set_text_color(71, 85, 105)
@@ -1924,71 +1982,178 @@ def generate_pdf_report(student_name: str, student_id: str, date_str: str,
     return bytes(pdf.output())
 
 
+def generate_certificate_pdf(student_name: str, student_id: str, date_str: str,
+                             quiz_score: int, quiz_total: int, trials: int) -> bytes:
+    """A one-page landscape certificate of completion."""
+    pdf = FPDF(orientation="L", format="A4")
+    pdf.set_auto_page_break(auto=False)
+    pdf.add_page()
+    width, height = pdf.w, pdf.h
+
+    pdf.set_draw_color(30, 58, 138)
+    pdf.set_line_width(1.6)
+    pdf.rect(10, 10, width - 20, height - 20)
+    pdf.set_line_width(0.4)
+    pdf.rect(14, 14, width - 28, height - 28)
+
+    pdf.set_y(28)
+    pdf.set_font("Helvetica", "B", 26)
+    pdf.set_text_color(30, 58, 138)
+    pdf.cell(0, 12, "CERTIFICATE OF COMPLETION", align="C", new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_font("Helvetica", "", 12)
+    pdf.set_text_color(71, 85, 105)
+    pdf.cell(0, 8, pdf_safe(EXPERIMENT_CONFIG["course"]), align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(6)
+    pdf.cell(0, 7, "This is to certify that", align="C", new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_font("Helvetica", "B", 22)
+    pdf.set_text_color(15, 23, 42)
+    pdf.cell(0, 14, pdf_safe(student_name), align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_text_color(100, 116, 139)
+    pdf.cell(0, 6, pdf_safe(f"Roll / ID: {student_id}"), align="C", new_x="LMARGIN", new_y="NEXT")
+
+    pdf.ln(4)
+    pdf.set_font("Helvetica", "", 12)
+    pdf.set_text_color(51, 65, 85)
+    pdf.cell(0, 7, "has successfully completed the virtual laboratory experiment",
+             align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(15, 23, 42)
+    pdf.cell(0, 10, pdf_safe(f"{EXPERIMENT_CONFIG['experiment_no']}: {EXPERIMENT_CONFIG['title']}"),
+             align="C", new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_text_color(71, 85, 105)
+    pdf.cell(0, 7, pdf_safe(f"Quiz score: {quiz_score} / {quiz_total}    |    Query trials recorded: {trials}"),
+             align="C", new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_draw_color(150, 150, 150)
+    baseline = height - 40
+    pdf.line(40, baseline, 110, baseline)
+    pdf.line(width - 110, baseline, width - 40, baseline)
+    pdf.set_font("Helvetica", "I", 9)
+    pdf.set_text_color(100, 116, 139)
+    pdf.set_xy(40, baseline + 2)
+    pdf.cell(70, 5, pdf_safe(f"Date: {date_str}"), align="C")
+    pdf.set_xy(width - 110, baseline + 2)
+    pdf.cell(70, 5, "Faculty Signature", align="C")
+
+    return bytes(pdf.output())
+
+
 DEFAULT_NOTES = (
     "Node lookups with inline properties and WHERE filters returned exactly the nodes that satisfied the "
-    "conditions. Changing relationship direction changed the 1-hop results, confirming that Cypher "
+    "conditions. Changing relationship direction changed the 1-hop results, confirming that graph "
     "relationships are directed. Increasing the hop range in multi-hop traversal grew the number of reachable "
-    "nodes and paths quickly, and aggregation with count(), ORDER BY and LIMIT identified the most connected "
-    "entities in the knowledge graph."
+    "nodes and paths quickly, showing how a few hops connect entities that share no direct relationship."
 )
 
 
 # ======================================================================================
-# 5. SECTION RENDERERS: THEORY, SIMULATION, QUIZ, REPORT
+# 5. SECTION RENDERERS
 # ======================================================================================
 
+def render_purpose_section():
+    """Case study that sets up why the lab is worth running."""
+    st.markdown(CASE_STUDY["scenario"])
+    st.subheader("Your tasks")
+    for i, task in enumerate(CASE_STUDY["tasks"], start=1):
+        st.markdown(f"**{i}. {task['ask']}**  \n{task['how']}")
+    st.subheader("Working through the lab")
+    st.markdown(CASE_STUDY["route"])
+
+
 def render_theory_section():
-    """Renders Section 1: Theory, Background, Objectives, and Procedure."""
-    st.header("Theoretical Framework & Background")
+    """Renders Section 1: Theory, Objectives, Procedure, and Terminology."""
     st.markdown(THEORY_CONTENT["background"])
 
     st.subheader("Learning Objectives")
-    for i, obj in enumerate(EXPERIMENT_CONFIG["objectives"]):
-        st.write(f"- **Goal {i+1}**: {obj}")
+    for obj in EXPERIMENT_CONFIG["objectives"]:
+        st.markdown(f"- {obj}")
 
-    st.divider()
     st.subheader("Experimental Procedure")
     for step in THEORY_CONTENT["procedure"]:
-        st.write(f"- {step}")
+        st.markdown(f"- {step}")
 
-    st.divider()
-    with st.expander("Key Terminology Reference"):
-        var_df = pd.DataFrame(
-            list(THEORY_CONTENT["key_terms"].items()),
-            columns=["Term", "Definition & Role"]
-        )
-        st.table(var_df)
+    st.subheader("Key Terms")
+    st.dataframe(pd.DataFrame(sorted(THEORY_CONTENT["key_terms"].items()), columns=["Term", "Meaning"]),
+                 width="stretch", hide_index=True)
 
 
-def render_graph_explorer(graph, pos):
-    """Sample graph overview: full visualization, node/relationship lists, and schema."""
-    st.subheader("Explore the Sample Knowledge Graph")
-    st.caption(GRAPH_DATA["domain"] + ". Hover over nodes and relationship labels for details; drag to pan.")
+def custom_graph_rows() -> tuple:
+    """The student's graph as ((id, label, name), ...) and ((source, type, target), ...) tuples."""
+    names, nodes = [], []
+    for row in st.session_state["custom_nodes"]:
+        name = str(row.get("name") or "").strip()
+        label = str(row.get("label") or "").strip()
+        if name and label and name not in names:
+            names.append(name)
+            nodes.append((name, label, name))
+    rels = []
+    for row in st.session_state["custom_rels"]:
+        source = str(row.get("source") or "").strip()
+        target = str(row.get("target") or "").strip()
+        rel_type = str(row.get("type") or "").strip().upper().replace(" ", "_")
+        if rel_type and source in names and target in names:
+            rels.append((source, rel_type, target))
+    return tuple(nodes), tuple(rels)
 
-    m1, m2, m3, m4 = st.columns(4)
-    with m1:
-        st.metric("Nodes", graph.number_of_nodes())
-    with m2:
-        st.metric("Relationships", graph.number_of_edges())
-    with m3:
-        st.metric("Node Labels", len(graph_labels(graph)))
-    with m4:
-        st.metric("Relationship Types", len(relationship_types(graph)))
 
-    tab_graph, tab_nodes, tab_rels, tab_schema = st.tabs(
-        ["Graph View", "Node List", "Relationship List", "Schema"]
-    )
-    with tab_graph:
-        show_labels = st.checkbox("Show relationship type labels", value=True, key="explorer_edge_labels")
-        st.plotly_chart(build_graph_figure(graph, pos, show_edge_labels=show_labels),
-                        key="full_graph_chart")
+def active_graph() -> nx.MultiDiGraph:
+    """The graph the Simulation currently works on: the movie sample or the student's own."""
+    if st.session_state.get("graph_source") == GRAPH_SOURCES[1]:
+        return build_custom_graph(*custom_graph_rows())
+    return build_knowledge_graph()
+
+
+def render_custom_graph_editor():
+    """Two editable tables that define the student's own graph."""
+    st.caption("Add or delete rows to build your own graph. Every node needs a name and a label; "
+               "every relationship joins two nodes that already exist. Names must be unique.")
+    col_nodes, col_rels = st.columns(2)
+    with col_nodes:
+        st.markdown("**Nodes**")
+        nodes_df = st.data_editor(
+            pd.DataFrame(st.session_state["custom_nodes"], columns=["name", "label"]),
+            num_rows="dynamic", hide_index=True, width="stretch", key="custom_nodes_editor",
+            column_config={
+                "name": st.column_config.TextColumn("Name", required=True),
+                "label": st.column_config.TextColumn("Label", required=True, help="Person, Book, City, ..."),
+            })
+        st.session_state["custom_nodes"] = nodes_df.to_dict("records")
+    names = [str(row.get("name") or "").strip() for row in st.session_state["custom_nodes"]
+             if str(row.get("name") or "").strip()]
+    with col_rels:
+        st.markdown("**Relationships**")
+        rels_df = st.data_editor(
+            pd.DataFrame(st.session_state["custom_rels"], columns=["source", "type", "target"]),
+            num_rows="dynamic", hide_index=True, width="stretch", key="custom_rels_editor",
+            column_config={
+                "source": st.column_config.SelectboxColumn("From", options=names, required=True),
+                "type": st.column_config.TextColumn("Type", required=True, help="WROTE, LIVES_IN, ..."),
+                "target": st.column_config.SelectboxColumn("To", options=names, required=True),
+            })
+        st.session_state["custom_rels"] = rels_df.to_dict("records")
+    if st.button("Reset to the starter example"):
+        st.session_state["custom_nodes"] = [dict(n) for n in CUSTOM_GRAPH_SEED["nodes"]]
+        st.session_state["custom_rels"] = [dict(r) for r in CUSTOM_GRAPH_SEED["relationships"]]
+        for key in ("custom_nodes_editor", "custom_rels_editor"):
+            st.session_state.pop(key, None)
+        st.rerun()
+
+
+def render_graph_tables(graph):
+    """Node list, relationship list and schema of the graph in play."""
+    tab_nodes, tab_rels, tab_schema = st.tabs(["Node List", "Relationship List", "Schema"])
     with tab_nodes:
         node_rows = []
         for n in sorted_node_ids(graph):
             props = graph.nodes[n]["props"]
-            node_rows.append([n, node_label(graph, n), props["name"],
+            node_rows.append([node_label(graph, n), props["name"],
                               format_props({k: v for k, v in props.items() if k != "name"})])
-        st.dataframe(pd.DataFrame(node_rows, columns=["ID", "Label", "name", "Other Properties"]),
+        st.dataframe(pd.DataFrame(node_rows, columns=["Label", "name", "Other Properties"]),
                      width="stretch", hide_index=True)
     with tab_rels:
         rel_rows = [[node_name(graph, u), d["type"], node_name(graph, v), format_props(d["props"])]
@@ -1998,15 +2163,13 @@ def render_graph_explorer(graph, pos):
     with tab_schema:
         label_rows = [[f":{lab}", len(sorted_node_ids(graph, lab)), ", ".join(property_keys(graph, lab))]
                       for lab in graph_labels(graph)]
-        st.markdown("**Node labels**")
         st.dataframe(pd.DataFrame(label_rows, columns=["Label", "Nodes", "Properties"]),
                      width="stretch", hide_index=True)
         patterns = {}
         for u, v, d in graph.edges(data=True):
             key = f"(:{node_label(graph, u)})-[:{d['type']}]->(:{node_label(graph, v)})"
             patterns[key] = patterns.get(key, 0) + 1
-        st.markdown("**Relationship patterns**")
-        st.dataframe(pd.DataFrame(sorted(patterns.items()), columns=["Pattern", "Count"]),
+        st.dataframe(pd.DataFrame(sorted(patterns.items()), columns=["Relationship pattern", "Count"]),
                      width="stretch", hide_index=True)
 
 
@@ -2019,27 +2182,29 @@ def limit_input(container) -> int:
 def render_query_builder(graph) -> dict:
     """Guided Query Builder: collects options for the selected mode and executes the query."""
     cfg = SIMULATION_CONFIG
-    st.subheader("Cypher Query Builder")
     mode = st.selectbox("Query pattern mode", options=list(cfg["query_modes"]), index=0)
     labels = graph_labels(graph)
     rel_types = relationship_types(graph)
     node_ids = sorted_node_ids(graph)
-    default_start = node_ids.index(GRAPH_DATA["nodes"][0]["id"])
+    default_id = GRAPH_DATA["nodes"][0]["id"]
+    default_start = node_ids.index(default_id) if default_id in node_ids else 0
 
     def fmt(n):
         return node_display(graph, n)
 
     if mode == "Node Lookup":
         st.caption("Find nodes by label and, optionally, a property condition.")
-        c1, c2, c3, c4, c5 = st.columns(5)
+        c1, c2 = st.columns(2)
         with c1:
             label = st.selectbox("Node label", [ANY] + labels, index=1)
         with c2:
-            prop_key = st.selectbox("Property", [NO_FILTER] + property_keys(graph, label), index=1)
+            keys = property_keys(graph, label)
+            prop_key = st.selectbox("Property", [NO_FILTER] + keys, index=1 if keys else 0)
         operator, value = "=", None
         if prop_key != NO_FILTER:
             values = property_values(graph, label, prop_key)
             numeric = all(isinstance(v, (int, float)) for v in values)
+            c3, c4 = st.columns(2)
             with c3:
                 operator = st.selectbox("Operator", NUMERIC_OPERATORS if numeric else STRING_OPERATORS)
             with c4:
@@ -2050,56 +2215,33 @@ def render_query_builder(graph) -> dict:
                     value = st.selectbox(f"Value of {prop_key}", values)
                 else:
                     value = st.text_input(f"Text for {prop_key}", value="")
-        limit = limit_input(c5)
+        limit = limit_input(st.columns(2)[0])
         return query_node_lookup(graph, label, prop_key, operator, value, limit)
 
     if mode == "Relationship Traversal (1-hop)":
         st.caption("Follow relationships one hop away from a chosen start node.")
-        c1, c2, c3, c4 = st.columns([2, 1.3, 2, 1])
+        c1, c2 = st.columns(2)
         with c1:
             start_id = st.selectbox("Start node (a)", node_ids, index=default_start, format_func=fmt)
         with c2:
             rel_type = st.selectbox("Relationship type", [ANY] + rel_types)
+        c3, c4 = st.columns([2, 1])
         with c3:
-            direction = st.radio("Direction", list(DIRECTIONS), horizontal=False)
+            direction = st.radio("Direction", list(DIRECTIONS))
         limit = limit_input(c4)
         return query_one_hop(graph, start_id, rel_type, DIRECTIONS[direction], limit)
 
-    if mode == "Multi-hop Traversal":
-        st.caption("Find every path of 1 up to N hops (any relationship type, any direction) from a start node.")
-        c1, c2, c3, c4 = st.columns([2, 1, 1.3, 1])
-        with c1:
-            start_id = st.selectbox("Start node (a)", node_ids, index=default_start, format_func=fmt)
-        with c2:
-            max_hops = st.radio("Maximum hops", cfg["hop_options"], horizontal=True)
-        with c3:
-            target_label = st.selectbox("End node label (b)", [ANY] + labels)
-        limit = limit_input(c4)
-        return query_multi_hop(graph, start_id, int(max_hops), target_label, limit)
-
-    if mode == "Filtered Pattern Match":
-        st.caption("Match every relationship of one type whose end nodes carry the chosen labels.")
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            source_label = st.selectbox("Start node label (a)", [ANY] + labels)
-        with c2:
-            rel_type = st.selectbox("Relationship type", rel_types)
-        with c3:
-            target_label = st.selectbox("End node label (b)", [ANY] + labels)
-        limit = limit_input(c4)
-        return query_filtered_pattern(graph, rel_type, source_label, target_label, limit)
-
-    # Aggregation
-    st.caption("Count relationships or nodes per group, sorted by count, and keep the top N.")
-    c1, c2, c3 = st.columns([2, 1.3, 1.5])
+    st.caption("Find every path of 1 up to N hops (any relationship type, any direction) from a start node.")
+    c1, c2 = st.columns(2)
     with c1:
-        group_by = st.selectbox("Group and count", cfg["aggregation_modes"])
-    node_grouping = group_by in cfg["aggregation_modes"][:2]
+        start_id = st.selectbox("Start node (a)", node_ids, index=default_start, format_func=fmt)
     with c2:
-        label = st.selectbox("Node label filter (n)", [ANY] + labels, disabled=not node_grouping)
+        target_label = st.selectbox("End node label (b)", [ANY] + labels)
+    c3, c4 = st.columns([2, 1])
     with c3:
-        top_n = st.slider("LIMIT (top N)", min_value=1, max_value=graph.number_of_nodes(), value=5)
-    return query_aggregation(graph, group_by, label if node_grouping else ANY, top_n)
+        max_hops = st.radio("Maximum hops", cfg["hop_options"], horizontal=True)
+    limit = limit_input(c4)
+    return query_multi_hop(graph, start_id, int(max_hops), target_label, limit)
 
 
 def reset_cypher_editor():
@@ -2107,7 +2249,7 @@ def reset_cypher_editor():
 
 
 def render_cypher_editor(graph, builder_result):
-    """Editable Cypher box: starts as the builder's query; an edited query runs through the Cypher subset.
+    """Editable query box: starts as the builder's query; an edited query runs through the interpreter.
     Returns the result to display, or None when the edited query cannot be run."""
     generated = builder_result["cypher"]
     # A new builder query (or returning to this section) refills the editor
@@ -2115,16 +2257,14 @@ def render_cypher_editor(graph, builder_result):
         st.session_state["cypher_generated"] = generated
         st.session_state["cypher_editor"] = generated
 
-    st.markdown("**Query Pattern** (read / write: edit it, then press Ctrl+Enter to run)")
+    st.markdown("**Query** (edit it, then press Ctrl+Enter to run)")
     text = st.text_area("Query pattern", key="cypher_editor", label_visibility="collapsed",
-                        height=max(110, 26 * (generated.count("\n") + 2)))
+                        height=max(120, 30 * (generated.count("\n") + 2)))
     edited = " ".join(text.split()) != " ".join(generated.split())
 
-    col_reset, col_help = st.columns([1, 3])
-    with col_reset:
-        st.button("Reset to Query Builder", on_click=reset_cypher_editor, disabled=not edited, width="stretch")
-    with col_help:
-        st.caption("Supported: MATCH (patterns, -[*1..3]- paths), WHERE (AND / OR / NOT, =, <>, <, >, CONTAINS, "
+    st.button("Reset to Query Builder", on_click=reset_cypher_editor, disabled=not edited)
+    with st.expander("What the query box accepts"):
+        st.caption("MATCH (patterns, -[*1..3]- paths), WHERE (AND / OR / NOT, =, <>, <, >, CONTAINS, "
                    "STARTS WITH, IN, IS NULL), RETURN (DISTINCT, AS, count, type, labels, length, properties), "
                    "ORDER BY, SKIP, LIMIT. The graph is read-only: CREATE, SET and DELETE are blocked.")
 
@@ -2138,24 +2278,43 @@ def render_cypher_editor(graph, builder_result):
 
 
 def render_simulation_section():
-    """Renders Section 2: Graph Explorer, Query Builder, Results, and Trial Logger."""
-    st.header("Interactive Simulation: Querying a Knowledge Graph")
-    st.info("Explore the sample graph, build a query pattern with the guided Query Builder (or edit it by hand), "
-            "and log each query as a trial. The graph lives in memory (networkx).")
+    """Graph picker, Query Builder beside the result graph, then the results. Returns the current result."""
+    with st.expander("Graph data", expanded=False):
+        st.radio("Graph", GRAPH_SOURCES, horizontal=True, key="graph_source")
+        if st.session_state["graph_source"] == GRAPH_SOURCES[1]:
+            render_custom_graph_editor()
+        preview = active_graph()
+        st.caption(f"{preview.number_of_nodes()} nodes | {preview.number_of_edges()} relationships | "
+                   f"{len(graph_labels(preview))} labels | {len(relationship_types(preview))} relationship types")
+        if preview.number_of_nodes():
+            render_graph_tables(preview)
 
-    graph = build_knowledge_graph()
-    pos = compute_layout(SIMULATION_CONFIG["layout_seed"],
-                         tuple(sorted(SIMULATION_CONFIG["node_positions"].items())))
+    graph = active_graph()
+    if graph.number_of_nodes() == 0:
+        st.info("This graph is empty. Open **Graph data** above and add at least one node.")
+        return None
+    pos = layout_for(graph)
 
-    render_graph_explorer(graph, pos)
-    st.divider()
-    result = render_query_builder(graph)
+    col_query, col_graph = st.columns([1, 1.15], gap="large")
+    with col_query:
+        builder_result = render_query_builder(graph)
+        result = render_cypher_editor(graph, builder_result)
+        if result is None:
+            st.info("Fix the query above, or click 'Reset to Query Builder' to get the generated query back.")
+    with col_graph:
+        if result is None:
+            st.markdown("**Graph**")
+            st.plotly_chart(build_graph_figure(graph, pos), key="result_graph_chart")
+        else:
+            st.markdown("**Result graph** (matched items in red; start node enlarged)")
+            st.plotly_chart(
+                build_graph_figure(graph, pos, highlight_nodes=result["nodes"],
+                                   highlight_edges=result["edges"], focus_nodes=result["focus"]),
+                key="result_graph_chart"
+            )
 
-    result = render_cypher_editor(graph, result)
-
-    if result is None:
-        st.info("Fix the query above, or click 'Reset to Query Builder' to get the generated query back.")
-    else:
+    if result is not None:
+        st.divider()
         m1, m2, m3, m4 = st.columns(4)
         with m1:
             st.metric("Rows Returned", len(result["table"]))
@@ -2166,78 +2325,25 @@ def render_simulation_section():
         with m4:
             st.metric("Query Mode", result["mode"])
         st.write(f"**Result summary:** {result['summary']}")
-
-        col_table, col_graph = st.columns([2, 3])
-        with col_table:
-            st.markdown("**Result Table**")
-            if result["table"].empty:
-                st.warning("The query returned 0 rows. Try a different label, relationship type, or direction.")
-            else:
-                st.dataframe(result["table"], width="stretch", hide_index=True)
-        with col_graph:
-            st.markdown("**Highlighted Subgraph** (matched items in red; start node enlarged)")
-            st.plotly_chart(
-                build_graph_figure(graph, pos, highlight_nodes=result["nodes"],
-                                   highlight_edges=result["edges"], focus_nodes=result["focus"]),
-                key="result_graph_chart"
-            )
-
+        if result["table"].empty:
+            st.warning("The query returned 0 rows. Try a different label, relationship type, or direction.")
+        else:
+            st.dataframe(result["table"], width="stretch", hide_index=True)
         if result["chart"] is not None and not result["chart"].empty:
             columns = list(result["table"].columns)
-            st.plotly_chart(build_aggregation_chart(result["chart"], columns[-2], columns[-1]),
-                            key="aggregation_chart")
-
-    # Data Logger
-    st.divider()
-    st.subheader("Experimental Data Log Book")
-    col_log1, col_log2 = st.columns([1.5, 3.5])
-
-    with col_log1:
-        st.caption("Capture the current query and its result counts into your session trial table:")
-        if st.button("Record Current Trial", type="primary", width="stretch", disabled=result is None):
-            trial_record = {
-                "Trial #": len(st.session_state["trials"]) + 1,
-                "Query Mode": result["mode"],
-                "Scope": result["scope"],
-                "Rows": len(result["table"]),
-                "Nodes Hit": len(result["nodes"]),
-                "Edges Hit": len(result["edges"]),
-                "Cypher Query": " ".join(result["cypher"].split()),
-                "Summary": result["summary"],
-                "Timestamp": datetime.now().strftime("%H:%M:%S")
-            }
-            st.session_state["trials"].append(trial_record)
-            st.toast(f"Trial #{trial_record['Trial #']} successfully saved!")
-
-        if st.button("Clear Logged Trials", width="stretch"):
-            st.session_state["trials"] = []
-            st.toast("Trial log cleared.")
-
-    with col_log2:
-        if st.session_state["trials"]:
-            df_trials = pd.DataFrame(st.session_state["trials"])
-            st.dataframe(df_trials, width="stretch", hide_index=True)
-            csv_data = df_trials.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                "Download Trials as CSV",
-                data=csv_data,
-                file_name="cypher_query_trials.csv",
-                mime="text/csv",
-                width="stretch"
-            )
-        else:
-            st.info("No trials recorded yet. Click 'Record Current Trial' to begin collecting experimental data.")
+            st.plotly_chart(build_count_chart(result["chart"], columns[-2], columns[-1]), key="count_chart")
+    return result
 
 
 def render_quiz_section():
     """Renders Section 3: Assessment Quiz with Self-Grading and Feedback."""
-    st.header("Concept Assessment Quiz")
-    st.write("Answer the conceptual questions below to evaluate your understanding of knowledge graphs and Cypher.")
+    st.write("Answer the conceptual questions below to evaluate your understanding of knowledge graphs "
+             "and graph queries.")
 
     with st.form("lab_quiz_form"):
         user_responses = {}
         for q in QUIZ_QUESTIONS:
-            st.subheader(f"Question {q['id']}")
+            st.markdown(f"**Question {q['id']}**")
             st.write(q["question"])
             selected = st.radio(
                 label=f"Options for Question {q['id']}:",
@@ -2273,12 +2379,12 @@ def render_quiz_section():
         st.info(f"Final Score: **{score} / {len(QUIZ_QUESTIONS)}** ({perc:.0f}%)")
 
     elif st.session_state.get("quiz_submitted", False):
-        st.success(f"Quiz already submitted. Current score: **{st.session_state.get('quiz_score', 0)} / {len(QUIZ_QUESTIONS)}**")
+        st.success(f"Quiz already submitted. Current score: "
+                   f"**{st.session_state.get('quiz_score', 0)} / {len(QUIZ_QUESTIONS)}**")
 
 
 def render_report_section():
     """Renders Section 4: Dynamic Lab Report Generator with Guaranteed PDF Export."""
-    st.header("Report Generation")
     st.write("Compile your student details, recorded query trials, and quiz evaluation into an official PDF report.")
 
     col1, col2, col3 = st.columns(3)
@@ -2303,7 +2409,6 @@ def render_report_section():
 
     trials_df = pd.DataFrame(st.session_state["trials"]) if st.session_state["trials"] else pd.DataFrame()
 
-    st.divider()
     st.subheader("Report Summary Preview")
     st.write(f"**Experiment:** {EXPERIMENT_CONFIG['experiment_no']}: {EXPERIMENT_CONFIG['title']}")
     st.write(f"**Student:** {student_name} | **ID:** {student_id} | **Date:** {lab_date}")
@@ -2312,7 +2417,8 @@ def render_report_section():
     if not trials_df.empty:
         st.dataframe(trials_df, hide_index=True, width="stretch")
     else:
-        st.info("Note: You have not recorded any query trials in the Simulation tab yet. Your report will indicate 0 trials.")
+        st.info("Note: You have not recorded any query trials in the Simulation tab yet. "
+                "Your report will indicate 0 trials.")
 
     # Generate PDF bytes and write file to disk
     pdf_bytes = generate_pdf_report(
@@ -2333,34 +2439,80 @@ def render_report_section():
     with open(os.path.join(app_dir, "lab_report.pdf"), "wb") as f:
         f.write(pdf_bytes)
 
-    st.divider()
     st.subheader("Download Official Lab Report (.pdf)")
-
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
         # Direct static link ending in .pdf (requires server.enableStaticServing, see .streamlit/config.toml)
-        st.link_button(
-            "Open / Download PDF Document",
-            url="/app/static/lab_report.pdf",
-            type="primary",
-            width="stretch"
-        )
-
+        st.link_button("Open / Download PDF Document", url="/app/static/lab_report.pdf",
+                       type="primary", width="stretch")
     with col_btn2:
-        # Standard Streamlit download button
-        st.download_button(
-            label="Download lab_report.pdf",
-            data=pdf_bytes,
-            file_name="lab_report.pdf",
-            mime="application/pdf",
-            key="stream_pdf_btn",
-            width="stretch"
-        )
+        st.download_button(label="Download lab_report.pdf", data=pdf_bytes, file_name="lab_report.pdf",
+                           mime="application/pdf", key="stream_pdf_btn", width="stretch")
+
+
+def render_certificate_section():
+    """Certificate of completion, unlocked once the quiz has been submitted."""
+    if not st.session_state.get("quiz_submitted", False):
+        st.info("Complete the Quiz first. Your certificate shows the score you earned there.")
+        return
+
+    info = st.session_state["student_info"]
+    col1, col2 = st.columns(2)
+    with col1:
+        name = st.text_input("Name on certificate", value=info.get("name", "Student Name"))
+    with col2:
+        student_id = st.text_input("Roll / ID", value=info.get("id", "EXP-001"))
+    info["name"], info["id"] = name, student_id
+
+    score, total = st.session_state.get("quiz_score", 0), len(QUIZ_QUESTIONS)
+    trials = len(st.session_state["trials"])
+    date_str = info.get("date", str(datetime.now().date()))
+
+    with st.container(border=True):
+        st.markdown(
+            f"""
+<div style="text-align:center; padding: 1.2rem 0.5rem;">
+  <div style="letter-spacing:0.28em; font-size:0.85em; opacity:0.75;">CERTIFICATE OF COMPLETION</div>
+  <div style="font-size:0.95em; opacity:0.75; margin-top:0.4rem;">{EXPERIMENT_CONFIG['course']}</div>
+  <div style="margin-top:1.4rem; font-size:0.95em;">This is to certify that</div>
+  <div style="font-size:2.1em; font-weight:700; margin:0.3rem 0;">{name}</div>
+  <div style="font-size:0.9em; opacity:0.7;">Roll / ID: {student_id}</div>
+  <div style="margin-top:1.2rem; font-size:0.95em;">has successfully completed the virtual laboratory experiment</div>
+  <div style="font-size:1.25em; font-weight:600; margin:0.4rem 0;">
+    {EXPERIMENT_CONFIG['experiment_no']}: {EXPERIMENT_CONFIG['title']}</div>
+  <div style="margin-top:1rem; font-size:0.95em; opacity:0.8;">
+    Quiz score: <b>{score} / {total}</b> &nbsp;|&nbsp; Query trials recorded: <b>{trials}</b></div>
+  <div style="margin-top:1.4rem; font-size:0.9em; opacity:0.7;">Date: {date_str}</div>
+</div>
+""",
+            unsafe_allow_html=True)
+
+    st.download_button(
+        "Download certificate (.pdf)",
+        data=generate_certificate_pdf(name, student_id, date_str, score, total, trials),
+        file_name="certificate.pdf",
+        mime="application/pdf",
+        type="primary",
+        key="certificate_pdf_btn"
+    )
+
+
+def render_references_section():
+    """Sources behind the theory and the tools this lab is built on."""
+    st.subheader("Concepts")
+    for item in REFERENCES["concepts"]:
+        st.markdown(f"- {item}")
+    st.subheader("Tools used in this lab")
+    for item in REFERENCES["tools"]:
+        st.markdown(f"- {item}")
 
 
 # ======================================================================================
 # 6. MAIN ENTRYPOINT & NAVIGATION
 # ======================================================================================
+
+SECTIONS = ["Purpose", "Theory", "Simulation", "Quiz", "Report Generation", "Certificate", "References"]
+
 
 def init_session_state():
     """Initializes Streamlit session state variables."""
@@ -2380,43 +2532,82 @@ def init_session_state():
         }
     if "student_notes" not in st.session_state:
         st.session_state["student_notes"] = ""
+    if "graph_source" not in st.session_state:
+        st.session_state["graph_source"] = GRAPH_SOURCES[0]
+    if "custom_nodes" not in st.session_state:
+        st.session_state["custom_nodes"] = [dict(n) for n in CUSTOM_GRAPH_SEED["nodes"]]
+    if "custom_rels" not in st.session_state:
+        st.session_state["custom_rels"] = [dict(r) for r in CUSTOM_GRAPH_SEED["relationships"]]
+
+
+def record_trial(result):
+    """Appends the current query and its result counts to the session trial table."""
+    trial = {
+        "Trial #": len(st.session_state["trials"]) + 1,
+        "Query Mode": result["mode"],
+        "Scope": result["scope"],
+        "Rows": len(result["table"]),
+        "Nodes Hit": len(result["nodes"]),
+        "Edges Hit": len(result["edges"]),
+        "Query": " ".join(result["cypher"].split()),
+        "Summary": result["summary"],
+        "Timestamp": datetime.now().strftime("%H:%M:%S")
+    }
+    st.session_state["trials"].append(trial)
+    st.toast(f"Trial #{trial['Trial #']} saved.")
+
+
+def render_sidebar_log(result):
+    """Trial log book in the sidebar; recording needs a runnable query in the Simulation."""
+    st.sidebar.divider()
+    st.sidebar.subheader("Trial Log")
+    if st.sidebar.button("Record Current Trial", type="primary", width="stretch", disabled=result is None):
+        record_trial(result)
+    trials = st.session_state["trials"]
+    if trials:
+        if len(trials) > 8:
+            st.sidebar.caption(f"{len(trials) - 8} earlier trial(s) not shown")
+        for trial in trials[-8:]:
+            st.sidebar.markdown(f"**#{trial['Trial #']}** {trial['Query Mode']} - {trial['Rows']} row(s)")
+        st.sidebar.download_button("Download trials (.csv)",
+                                   data=pd.DataFrame(trials).to_csv(index=False).encode("utf-8"),
+                                   file_name="query_trials.csv", mime="text/csv", width="stretch")
+        if st.sidebar.button("Clear Logged Trials", width="stretch"):
+            st.session_state["trials"] = []
+            st.rerun()
+    else:
+        st.sidebar.caption("No trials yet. Run a query in the Simulation, then record it here.")
 
 
 def main():
-    st.set_page_config(
-        page_title="KGIRS Lab - Cypher Queries",
-        page_icon=None,
-        layout="wide"
-    )
-
+    st.set_page_config(page_title="KGIRS Virtual Lab", page_icon=None, layout="wide")
     init_session_state()
+    st.markdown(f"<style>html {{ font-size: {BASE_FONT_PX}px; }}</style>", unsafe_allow_html=True)
 
-    # Native Streamlit Title (No custom CSS)
     st.title(EXPERIMENT_CONFIG["title"])
     st.caption(f"{EXPERIMENT_CONFIG['experiment_no']} | {EXPERIMENT_CONFIG['course']}")
 
-    # Navigation Sidebar
-    section = st.sidebar.radio(
-        "Lab Navigator",
-        options=["Theory", "Simulation", "Quiz", "Report Generation"]
-    )
+    section = st.sidebar.radio("Lab Navigator", options=SECTIONS)
 
+    result = None
+    if section == "Simulation":
+        result = render_simulation_section()
+    else:
+        {
+            "Purpose": render_purpose_section,
+            "Theory": render_theory_section,
+            "Quiz": render_quiz_section,
+            "Report Generation": render_report_section,
+            "Certificate": render_certificate_section,
+            "References": render_references_section,
+        }[section]()
+
+    render_sidebar_log(result)
     st.sidebar.divider()
-    st.sidebar.subheader("Progress Tracker")
     quiz_status = "Done" if st.session_state.get("quiz_submitted", False) else "Pending"
-    st.sidebar.write(f"- **Quiz Status:** {quiz_status}")
-    if st.session_state.get("quiz_submitted", False):
-        st.sidebar.write(f"- **Quiz Score:** `{st.session_state.get('quiz_score', 0)} / {len(QUIZ_QUESTIONS)}`")
-
-    # Section Dispatcher
-    if section == "Theory":
-        render_theory_section()
-    elif section == "Simulation":
-        render_simulation_section()
-    elif section == "Quiz":
-        render_quiz_section()
-    elif section == "Report Generation":
-        render_report_section()
+    st.sidebar.caption(f"Quiz: {quiz_status}"
+                       + (f" | Score {st.session_state.get('quiz_score', 0)} / {len(QUIZ_QUESTIONS)}"
+                          if st.session_state.get("quiz_submitted", False) else ""))
 
 
 if __name__ == "__main__":

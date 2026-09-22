@@ -2144,9 +2144,13 @@ def render_custom_graph_editor():
         st.rerun()
 
 
-def render_graph_tables(graph):
-    """Node list, relationship list and schema of the graph in play."""
-    tab_nodes, tab_rels, tab_schema = st.tabs(["Node List", "Relationship List", "Schema"])
+def render_graph_tables(graph, pos):
+    """The whole graph, plus the node list, relationship list and schema of the graph in play."""
+    tab_graph, tab_nodes, tab_rels, tab_schema = st.tabs(
+        ["Graph View", "Node List", "Relationship List", "Schema"])
+    with tab_graph:
+        show_labels = st.checkbox("Show relationship type labels", value=True, key="explorer_edge_labels")
+        st.plotly_chart(build_graph_figure(graph, pos, show_edge_labels=show_labels), key="full_graph_chart")
     with tab_nodes:
         node_rows = []
         for n in sorted_node_ids(graph):
@@ -2279,7 +2283,7 @@ def render_cypher_editor(graph, builder_result):
 
 def render_simulation_section():
     """Graph picker, Query Builder beside the result graph, then the results. Returns the current result."""
-    with st.expander("Graph data", expanded=False):
+    with st.expander("Graph data", expanded=True):
         st.radio("Graph", GRAPH_SOURCES, horizontal=True, key="graph_source")
         if st.session_state["graph_source"] == GRAPH_SOURCES[1]:
             render_custom_graph_editor()
@@ -2287,7 +2291,7 @@ def render_simulation_section():
         st.caption(f"{preview.number_of_nodes()} nodes | {preview.number_of_edges()} relationships | "
                    f"{len(graph_labels(preview))} labels | {len(relationship_types(preview))} relationship types")
         if preview.number_of_nodes():
-            render_graph_tables(preview)
+            render_graph_tables(preview, layout_for(preview))
 
     graph = active_graph()
     if graph.number_of_nodes() == 0:

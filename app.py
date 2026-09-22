@@ -377,6 +377,7 @@ SIMULATION_CONFIG = {
     },
     "graph_height": 600,
     "max_limit": 50,
+    "transition_ms": 450,
     "all_names_max_nodes": 12,
     "node_label_size": 14,
     "edge_label_size": 12,
@@ -1789,12 +1790,12 @@ def build_graph_figure(graph, pos, highlight_nodes=None, highlight_edges=None,
         x=base_x, y=base_y, mode="lines", hoverinfo="skip", showlegend=False,
         line=dict(width=1.2, color=cfg["faded_edge_color"] if highlighting else cfg["edge_color"])
     ))
-    if highlighting:
-        fig.add_trace(go.Scatter(
-            x=hot_x if hot_x else [None], y=hot_y if hot_y else [None], mode="lines",
-            hoverinfo="skip", name="Matched relationship",
-            line=dict(width=3, color=cfg["highlight_color"])
-        ))
+    # Always drawn, even when empty: a constant trace order lets Plotly tween one query into the next.
+    fig.add_trace(go.Scatter(
+        x=hot_x if hot_x else [None], y=hot_y if hot_y else [None], mode="lines",
+        hoverinfo="skip", name="Matched relationship", showlegend=highlighting,
+        line=dict(width=3, color=cfg["highlight_color"])
+    ))
     fig.add_trace(go.Scatter(
         x=mid_x, y=mid_y, mode="markers+text", text=mid_text, hovertext=mid_hover,
         hoverinfo="text", textfont=dict(size=cfg["edge_label_size"]), showlegend=False,
@@ -1851,8 +1852,7 @@ def build_graph_figure(graph, pos, highlight_nodes=None, highlight_edges=None,
             )
 
         fig.add_trace(node_trace(hit, True, True))
-        if missed:
-            fig.add_trace(node_trace(missed, False, False))
+        fig.add_trace(node_trace(missed, False, False))
 
     xs = [p[0] for p in pos.values()]
     ys = [p[1] for p in pos.values()]
@@ -1863,6 +1863,9 @@ def build_graph_figure(graph, pos, highlight_nodes=None, highlight_edges=None,
         hovermode="closest",
         dragmode="pan",
         font=dict(size=cfg["legend_font_size"]),
+        # Tween between queries; uirevision keeps the student's pan and zoom until the graph itself changes.
+        transition=dict(duration=cfg["transition_ms"], easing="cubic-in-out"),
+        uirevision=f"{graph.number_of_nodes()}:{graph.number_of_edges()}:{','.join(graph_labels(graph))}",
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0),
         xaxis=dict(visible=False, range=[min(xs) - 0.3, max(xs) + 0.3]),
         yaxis=dict(visible=False, range=[min(ys) - 0.25, max(ys) + 0.15]),
@@ -2424,23 +2427,32 @@ def render_simulation_section():
 
     if result is not None:
         st.divider()
-        m1, m2, m3, m4 = st.columns(4)
-        with m1:
-            st.metric("Rows Returned", len(result["table"]))
-        with m2:
-            st.metric("Matched Nodes", len(result["nodes"]))
-        with m3:
-            st.metric("Matched Relationships", len(result["edges"]))
-        with m4:
-            st.metric("Query Mode", result["mode"])
-        st.write(f"**Result summary:** {result['summary']}")
-        if result["table"].empty:
-            st.warning("The query returned 0 rows. Try a different label, relationship type, or direction.")
-        else:
-            st.dataframe(result["table"], width="stretch", hide_index=True)
-        if result["chart"] is not None and not result["chart"].empty:
-            columns = list(result["table"].columns)
-            st.plotly_chart(build_count_chart(result["chart"], columns[-2], columns[-1]), key="count_chart")
+        # Streamlit reuses the metric elements between runs, so a plain CSS fade would never replay.
+        # Giving each query its own keyframes name changes the animation and the browser restarts it.
+        token = abs(hash(result["cypher"])) % 1000000
+        st.markdown(
+            f"<style>@keyframes kgResults{token}"
+            "{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}"
+            f".st-key-kg_results_{token}{{animation:kgResults{token} 340ms ease-out}}</style>",
+            unsafe_allow_html=True)
+        with st.container(key=f"kg_results_{token}"):
+            m1, m2, m3, m4 = st.columns(4)
+            with m1:
+                st.metric("Rows Returned", len(result["table"]))
+            with m2:
+                st.metric("Matched Nodes", len(result["nodes"]))
+            with m3:
+                st.metric("Matched Relationships", len(result["edges"]))
+            with m4:
+                st.metric("Query Mode", result["mode"])
+            st.write(f"**Result summary:** {result['summary']}")
+            if result["table"].empty:
+                st.warning("The query returned 0 rows. Try a different label, relationship type, or direction.")
+            else:
+                st.dataframe(result["table"], width="stretch", hide_index=True)
+            if result["chart"] is not None and not result["chart"].empty:
+                columns = list(result["table"].columns)
+                st.plotly_chart(build_count_chart(result["chart"], columns[-2], columns[-1]), key="count_chart")
     return result
 
 
@@ -2691,7 +2703,12 @@ def render_sidebar_log(result):
 def main():
     st.set_page_config(page_title="KGIRS Virtual Lab", page_icon=None, layout="wide")
     init_session_state()
-    st.markdown(f"<style>html {{ font-size: {BASE_FONT_PX}px; }}</style>", unsafe_allow_html=True)
+    st.markdown(
+        f"<style>html {{ font-size: {BASE_FONT_PX}px; }}"
+        "@keyframes kgFadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }"
+        '[data-testid="stPlotlyChart"], [data-testid="stAlert"] '
+        "{ animation: kgFadeIn 320ms ease-out; }</style>",
+        unsafe_allow_html=True)
 
     st.title(EXPERIMENT_CONFIG["title"])
     st.caption(f"{EXPERIMENT_CONFIG['experiment_no']} | {EXPERIMENT_CONFIG['course']}")

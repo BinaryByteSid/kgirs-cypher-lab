@@ -16,6 +16,7 @@ interpreter (section 2b) runs the edited query.
 Note: No custom CSS is used so that Streamlit native light and dark themes render seamlessly.
 """
 
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 from fpdf import FPDF
 
 
@@ -1896,6 +1898,284 @@ def build_count_chart(chart_df: pd.DataFrame, group_label: str, count_label: str
 
 
 # ======================================================================================
+# 3b. RESULT ANIMATION: THE QUERY WALKING THE GRAPH
+# ======================================================================================
+# The result view is a hand-built SVG whose animation is declarative (SMIL), so it replays
+# by itself every time the query changes. Relationships draw themselves outward from the
+# start node, a pulse rides along each one, and every node lands with an expanding ping.
+
+ANIM = {
+    # The canvas is deliberately small: everything below is in viewBox units, which the browser
+    # scales down to the column width, so a tight canvas keeps nodes and labels readable.
+    "view_w": 680,
+    "view_h": 610,
+    "pad_x": 80,
+    "pad_y": 52,
+    "top": 44,            # room for the legend
+    "node_r": 15,
+    "start_r": 20,
+    "settle": 0.35,       # the untouched graph fades in over this
+    "hop_gap": 0.34,      # delay between one ring of relationships and the next
+    "edge_dur": 0.5,      # a relationship draws itself in this long
+    "pop_dur": 0.42,      # a node lands in this long
+    "stagger": 0.08,      # spacing when there is no start node to walk out from
+}
+
+NODE_SHAPES = {
+    "circle": '<circle r="{r}"{extra}/>',
+    "square": '<rect x="-{r}" y="-{r}" width="{d}" height="{d}" rx="3"{extra}/>',
+    "diamond": '<polygon points="0,-{rr} {rr},0 0,{rr} -{rr},0"{extra}/>',
+    "triangle-up": '<polygon points="0,-{rr} {rr},{r} -{rr},{r}"{extra}/>',
+    "pentagon": '<polygon points="0,-{rr} {rr},-2 {r},{rr} -{r},{rr} -{rr},-2"{extra}/>',
+    "hexagon": '<polygon points="-{r},-{rr} {r},-{rr} {rr},0 {r},{rr} -{r},{rr} -{rr},0"{extra}/>',
+    "star": '<polygon points="0,-{rr} 5,-4 {rr},-4 6,3 9,{rr} 0,8 -9,{rr} -6,3 -{rr},-4 -5,-4"{extra}/>',
+    "cross": '<polygon points="-5,-{rr} 5,-{rr} 5,-5 {rr},-5 {rr},5 5,5 5,{rr} -5,{rr} -5,5 -{rr},5 -{rr},-5 -5,-5"{extra}/>',
+}
+
+
+def dark_theme() -> bool:
+    """Whether Streamlit is currently rendering the dark theme (drawings must ink themselves)."""
+    theme = getattr(getattr(st, "context", None), "theme", None)
+    return getattr(theme, "type", "light") == "dark"
+
+
+def node_shape_svg(symbol: str, radius: int, extra: str = "") -> str:
+    template = NODE_SHAPES.get(symbol, NODE_SHAPES["circle"])
+    return template.format(r=radius, d=radius * 2, rr=radius + 2, extra=extra)
+
+
+def animation_schedule(result) -> tuple:
+    """When each matched node and relationship enters: hop by hop out from the start node."""
+    nodes = set(result["nodes"]) if result else set()
+    edges = set(result["edges"]) if result else set()
+    start = next(iter(result["focus"]), None) if result else None
+
+    node_at, edge_at = {}, {}
+    if start in nodes:
+        node_at[start] = 0.12
+        adjacency = {}
+        for u, v, k in edges:
+            adjacency.setdefault(u, []).append((v, (u, v, k)))
+            adjacency.setdefault(v, []).append((u, (u, v, k)))
+        frontier, walked, hop = [start], set(), 0
+        while frontier:
+            hop += 1
+            begin = ANIM["settle"] + (hop - 1) * ANIM["hop_gap"]
+            nxt = []
+            for node in frontier:
+                for other, edge in adjacency.get(node, []):
+                    if edge in walked:
+                        continue
+                    walked.add(edge)
+                    edge_at[edge] = begin
+                    if other not in node_at:
+                        node_at[other] = begin + ANIM["edge_dur"] * 0.62
+                        nxt.append(other)
+            frontier = nxt
+
+    # Whatever the walk never reached (node lookups, disconnected matches) simply cascades in.
+    for i, node in enumerate(sorted(nodes - set(node_at))):
+        node_at[node] = ANIM["settle"] + i * ANIM["stagger"]
+    for i, edge in enumerate(sorted(edges - set(edge_at))):
+        edge_at[edge] = ANIM["settle"] + i * ANIM["stagger"]
+    return node_at, edge_at
+
+
+def result_animation_html(graph, pos, result, dark: bool) -> str:
+    """The result graph as an animated SVG: the query walking outward from its start node."""
+    cfg, a = SIMULATION_CONFIG, ANIM
+    ink = "#e6e8ec" if dark else "#1f2937"
+    dim_line = "rgba(150,150,150,0.30)" if dark else "rgba(120,120,120,0.28)"
+    hot = cfg["highlight_color"]
+    highlighting = result is not None and bool(result["nodes"])
+    matched_nodes = set(result["nodes"]) if result else set()
+    matched_edges = set(result["edges"]) if result else set()
+    focus = set(result["focus"]) if result else set()
+    node_at, edge_at = animation_schedule(result)
+
+    xs = [p[0] for p in pos.values()] or [0.0]
+    ys = [p[1] for p in pos.values()] or [0.0]
+    span_x, span_y = (max(xs) - min(xs)) or 1.0, (max(ys) - min(ys)) or 1.0
+    # Axes are scaled independently so the drawing fills the frame; node shapes are drawn in their
+    # own translated groups, so only the spacing stretches, never the shapes themselves.
+    scale_x = (a["view_w"] - 2 * a["pad_x"]) / span_x
+    scale_y = (a["view_h"] - a["top"] - 2 * a["pad_y"]) / span_y
+    mid_x, mid_y = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    centre_y = a["top"] + (a["view_h"] - a["top"]) / 2
+
+    def place(node_id):
+        x, y = pos[node_id]
+        return (a["view_w"] / 2 + (x - mid_x) * scale_x, centre_y - (y - mid_y) * scale_y)
+
+    # Neighbours across the x axis put their names on opposite sides so they never collide.
+    name_above = {node_id: bool(i % 2) for i, node_id
+                  in enumerate(sorted(pos, key=lambda n: (pos[n][0], pos[n][1])))}
+
+    out = []
+    # --- relationships -------------------------------------------------------------
+    for u, v, k, data in graph.edges(keys=True, data=True):
+        if u not in pos or v not in pos:
+            continue
+        (x1, y1), (x2, y2) = place(u), place(v)
+        dx, dy = x2 - x1, y2 - y1
+        length = max((dx * dx + dy * dy) ** 0.5, 1.0)
+        ux, uy = dx / length, dy / length
+        gap = a["node_r"] + 10
+        sx, sy = x1 + ux * gap, y1 + uy * gap
+        ex, ey = x2 - ux * gap, y2 - uy * gap
+        draw = max(((ex - sx) ** 2 + (ey - sy) ** 2) ** 0.5, 1.0)
+        line = f"M{sx:.1f},{sy:.1f} L{ex:.1f},{ey:.1f}"
+        live = (u, v, k) in matched_edges
+        # The type sits beside its line, not on top of it, so it misses the node names below.
+        mid = (f'{(sx + ex) / 2 - uy * 11:.1f}', f'{(sy + ey) / 2 + ux * 11 + 4:.1f}')
+
+        if live:
+            begin = edge_at[(u, v, k)]
+            # The arrowhead is its own element: a marker would show at the tip before the line arrives.
+            angle = math.degrees(math.atan2(ey - sy, ex - sx))
+            out.append(
+                f'<g transform="translate({ex:.1f},{ey:.1f}) rotate({angle:.1f})" opacity="0">'
+                f'<polygon points="0,0 -12,-6 -12,6" fill="{hot}"/>'
+                f'<animate attributeName="opacity" from="0" to="1"'
+                f' begin="{begin + a["edge_dur"] * 0.8:.2f}s" dur="0.2s" fill="freeze"/></g>')
+            out.append(
+                f'<path d="{line}" fill="none" stroke="{hot}" stroke-width="3.4" stroke-linecap="round"'
+                f' filter="url(#glow)"'
+                f' stroke-dasharray="{draw:.1f}" stroke-dashoffset="{draw:.1f}">'
+                f'<animate attributeName="stroke-dashoffset" from="{draw:.1f}" to="0"'
+                f' begin="{begin:.2f}s" dur="{a["edge_dur"]}s" fill="freeze"'
+                f' calcMode="spline" keySplines="0.25 0.9 0.3 1" keyTimes="0;1"/></path>')
+            # a bead of light rides the relationship as it is drawn
+            out.append(
+                f'<circle r="0" fill="{hot}" filter="url(#glow)" opacity="0.95">'
+                f'<animateMotion path="{line}" begin="{begin:.2f}s" dur="{a["edge_dur"]}s"'
+                f' fill="freeze" calcMode="spline" keySplines="0.25 0.9 0.3 1" keyTimes="0;1"/>'
+                f'<animate attributeName="r" values="0;7;7;0" keyTimes="0;0.15;0.8;1"'
+                f' begin="{begin:.2f}s" dur="{a["edge_dur"]}s" fill="freeze"/></circle>')
+            out.append(
+                f'<text class="rel hotrel" x="{mid[0]}" y="{mid[1]}" opacity="0">{data["type"]}'
+                f'<animate attributeName="opacity" from="0" to="0.95"'
+                f' begin="{begin + a["edge_dur"] * 0.5:.2f}s" dur="0.3s" fill="freeze"/></text>')
+        else:
+            out.append(
+                f'<path d="{line}" fill="none" stroke="{dim_line}" stroke-width="1.5"'
+                f' marker-end="url(#tip-dim)" opacity="0">'
+                f'<animate attributeName="opacity" from="0" to="1" begin="0s"'
+                f' dur="{a["settle"]}s" fill="freeze"/></path>')
+            if not highlighting:
+                out.append(
+                    f'<text class="rel" x="{mid[0]}" y="{mid[1]}" opacity="0">{data["type"]}'
+                    f'<animate attributeName="opacity" from="0" to="0.7" begin="0.15s"'
+                    f' dur="0.35s" fill="freeze"/></text>')
+
+    # --- nodes ---------------------------------------------------------------------
+    for node_id in sorted_node_ids(graph):
+        if node_id not in pos:
+            continue
+        x, y = place(node_id)
+        label = node_label(graph, node_id)
+        style = label_style(label)
+        live = (not highlighting) or node_id in matched_nodes
+        is_start = node_id in focus
+        radius = a["start_r"] if is_start else a["node_r"]
+        props = graph.nodes[node_id]["props"]
+        tip = f'{props["name"]} :{label}' + "".join(
+            f' | {key}: {value}' for key, value in props.items() if key != "name")
+        begin = node_at.get(node_id, 0.0) if live else 0.0
+        name = node_name(graph, node_id)
+
+        out.append(f'<g transform="translate({x:.1f},{y:.1f})"><title>{tip}</title>')
+        if live and highlighting:
+            # a ping that expands and fades the moment the walk arrives
+            out.append(
+                f'<circle r="{radius}" fill="none" stroke="{hot}" stroke-width="2.5" opacity="0">'
+                f'<animate attributeName="r" values="{radius};{radius * 3.2:.0f}"'
+                f' begin="{begin:.2f}s" dur="0.75s" fill="freeze"'
+                f' calcMode="spline" keySplines="0.2 0.7 0.2 1" keyTimes="0;1"/>'
+                f'<animate attributeName="opacity" values="0.9;0" begin="{begin:.2f}s"'
+                f' dur="0.75s" fill="freeze"/></circle>')
+        if is_start:
+            # the origin keeps breathing so it stays obvious where the walk began
+            out.append(
+                f'<circle r="{radius}" fill="none" stroke="{hot}" stroke-width="2" opacity="0">'
+                f'<animate attributeName="r" values="{radius};{radius * 2.4:.0f};{radius}"'
+                f' begin="{begin + 0.8:.2f}s" dur="2.4s" repeatCount="indefinite"/>'
+                f'<animate attributeName="opacity" values="0;0.55;0" begin="{begin + 0.8:.2f}s"'
+                f' dur="2.4s" repeatCount="indefinite"/></circle>')
+
+        fill = style["color"]
+        stroke = f' stroke="{hot}" stroke-width="3"' if (live and highlighting) else ""
+        opacity = "1" if live else str(cfg["faded_opacity"])
+        shape = node_shape_svg(style["symbol"], radius, f' fill="{fill}"{stroke}')
+        glow = ' filter="url(#glow)"' if (live and highlighting) else ""
+        out.append(f'<g opacity="0"{glow}>')
+        out.append(shape)
+        if live:
+            out.append(
+                f'<animateTransform attributeName="transform" type="scale"'
+                f' values="0.25;1.22;1" keyTimes="0;0.62;1" begin="{begin:.2f}s"'
+                f' dur="{a["pop_dur"]}s" fill="freeze" calcMode="spline"'
+                f' keySplines="0.2 0.9 0.3 1;0.4 0 0.2 1"/>'
+                f'<animate attributeName="opacity" from="0" to="1" begin="{begin:.2f}s"'
+                f' dur="0.25s" fill="freeze"/>')
+        else:
+            out.append(
+                f'<animate attributeName="opacity" from="0" to="{opacity}" begin="0s"'
+                f' dur="{a["settle"]}s" fill="freeze"/>')
+        out.append("</g>")
+
+        show_name = live or graph.number_of_nodes() <= cfg["all_names_max_nodes"]
+        if show_name:
+            colour = ink if live else "rgba(140,140,140,0.9)"
+            label_y = -(radius + 13) if name_above[node_id] else radius + 21
+            out.append(
+                f'<text class="lbl" y="{label_y}" fill="{colour}" opacity="0">{name}'
+                f'<animate attributeName="opacity" from="0" to="1"'
+                f' begin="{begin + 0.18:.2f}s" dur="0.3s" fill="freeze"/></text>')
+        out.append("</g>")
+
+    # --- legend --------------------------------------------------------------------
+    legend, lx = [], 10
+    if highlighting:
+        legend.append(f'<g transform="translate({lx},24)">'
+                      f'<line x1="0" y1="0" x2="24" y2="0" stroke="{hot}" stroke-width="3.4"/>'
+                      f'<text class="lgd" x="31" y="5">Matched</text></g>')
+        lx += 120
+    for label in graph_labels(graph):
+        style = label_style(label)
+        legend.append(f'<g transform="translate({lx},24)">'
+                      + node_shape_svg(style["symbol"], 8, f' fill="{style["color"]}"')
+                      + f'<text class="lgd" x="15" y="5">{label}</text></g>')
+        lx += 24 + 8 * len(label)
+
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'><style>"
+        "html,body{margin:0;padding:0;height:100%;background:transparent;overflow:hidden;"
+        "font-family:'Source Sans Pro',-apple-system,system-ui,sans-serif}"
+        "svg{width:100%;height:100%;display:block}"
+        f".lbl{{font-size:17px;fill:{ink};text-anchor:middle}}"
+        f".rel{{font-size:14px;fill:{ink};text-anchor:middle}}"
+        f".hotrel{{fill:{hot};font-weight:600}}"
+        f".lgd{{font-size:16px;fill:{ink}}}"
+        "</style></head><body>"
+        f"<svg viewBox='0 0 {a['view_w']} {a['view_h']}' preserveAspectRatio='xMidYMid meet'>"
+        "<defs>"
+        f'<filter id="glow" x="-60%" y="-60%" width="220%" height="220%">'
+        f'<feGaussianBlur stdDeviation="3.4" result="b"/>'
+        f'<feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>'
+        f'<marker id="tip-hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5"'
+        f' markerHeight="5.5" orient="auto-start-reverse">'
+        f'<path d="M0 0 L10 5 L0 10 z" fill="{hot}"/></marker>'
+        f'<marker id="tip-dim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5"'
+        f' markerHeight="5" orient="auto-start-reverse">'
+        f'<path d="M0 0 L10 5 L0 10 z" fill="{dim_line}"/></marker>'
+        "</defs>"
+        + "".join(legend) + "".join(out) +
+        "</svg></body></html>"
+    )
+
+
+# ======================================================================================
 # 4. LAB REPORT PDF EXPORTER
 # ======================================================================================
 
@@ -2145,9 +2425,7 @@ DEFAULT_NOTES = (
 
 def purpose_art() -> str:
     """The illustration, inked for the active theme: an SVG shown as an image cannot inherit page colours."""
-    theme_type = getattr(getattr(st, "context", None), "theme", None)
-    dark = getattr(theme_type, "type", "light") == "dark"
-    return PURPOSE_ART.replace("currentColor", "#e6e8ec" if dark else "#1f2937")
+    return PURPOSE_ART.replace("currentColor", "#e6e8ec" if dark_theme() else "#1f2937")
 
 
 def render_purpose_section():
@@ -2414,16 +2692,11 @@ def render_simulation_section():
         if result is None:
             st.info("Fix the query above, or click 'Reset to Query Builder' to get the generated query back.")
     with col_graph:
-        if result is None:
-            st.markdown("**Graph**")
-            st.plotly_chart(build_graph_figure(graph, pos), key="result_graph_chart")
-        else:
-            st.markdown("**Result graph** (matched items in red; start node enlarged)")
-            st.plotly_chart(
-                build_graph_figure(graph, pos, highlight_nodes=result["nodes"],
-                                   highlight_edges=result["edges"], focus_nodes=result["focus"]),
-                key="result_graph_chart"
-            )
+        st.markdown("**Result graph**" if result is not None else "**Graph**")
+        st.caption("The query walks the graph: relationships light up hop by hop from the start node. "
+                   "Hover a node for its properties; the animation replays with every query.")
+        components.html(result_animation_html(graph, pos, result, dark_theme()),
+                        height=SIMULATION_CONFIG["graph_height"] + 40)
 
     if result is not None:
         st.divider()
